@@ -52,15 +52,23 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   }, [currentTripRecords, labelSearch, palletTypes]);
 
   const stats = useMemo(() => {
-    const relevantRecords = role === 'monitor' ? records : records.filter(r => {
+    const relevantRecords = (role === 'monitor' || userCode === 'ADMIN') ? records : records.filter(r => {
       if (role === 'factory') return r.palletBarcode.includes(userCode);
       if (role === 'center') return r.destination === userCenter;
       return false;
     });
 
+    const received = relevantRecords.filter(r => r.status === 'received');
+
     return { 
       total: relevantRecords.length, 
-      received: relevantRecords.filter(r => r.status === 'received').length,
+      received: received.length,
+      damaged: received.filter(r => r.condition && r.condition !== 'intact').length,
+      extDamaged: received.filter(r => r.condition === 'external_box_damage' || r.condition === 'both').length,
+      intDamaged: received.filter(r => r.condition === 'internal_content_damage' || r.condition === 'both').length,
+      bothDamaged: received.filter(r => r.condition === 'both').length,
+      totalExtCartons: received.reduce((acc, r) => acc + (r.externalDamageQty || 0), 0),
+      totalIntCartons: received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0),
     };
   }, [records, role, userCode, userCenter]);
 
@@ -147,6 +155,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
     setTimeout(() => setShowLabels(true), 500);
   };
 
+  const isMonitor = role === 'monitor' || userCode === 'ADMIN';
+
   return (
     <div className="space-y-6 animate-fadeIn pb-10 text-right" dir="rtl">
       {(activeChoiceId || isBatchPrinting) && (
@@ -206,6 +216,57 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
           <span className="text-[10px] font-bold text-emerald-500">تم استلامها</span>
         </div>
       </section>
+
+      {isMonitor && (
+        <section className="space-y-4 animate-slideDown">
+          <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
+            <h2 className="text-lg font-black text-indigo-900 border-b pb-4">📊 تقرير التلفيات المتقدم</h2>
+            
+            <div className="grid grid-cols-3 gap-3">
+               <div className="bg-rose-50 p-4 rounded-3xl text-center border border-rose-100">
+                  <span className="text-xl block">⚠️</span>
+                  <span className="text-lg font-black text-rose-700">{stats.damaged}</span>
+                  <span className="text-[8px] font-black text-rose-400 block uppercase">إجمالي التالف</span>
+               </div>
+               <div className="bg-amber-50 p-4 rounded-3xl text-center border border-amber-100">
+                  <span className="text-xl block">📦</span>
+                  <span className="text-lg font-black text-amber-700">{stats.extDamaged}</span>
+                  <span className="text-[8px] font-black text-amber-400 block uppercase">تلف خارجي</span>
+               </div>
+               <div className="bg-orange-50 p-4 rounded-3xl text-center border border-orange-100">
+                  <span className="text-xl block">📖</span>
+                  <span className="text-lg font-black text-orange-700">{stats.intDamaged}</span>
+                  <span className="text-[8px] font-black text-orange-400 block uppercase">تلف داخلي</span>
+               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-50 p-5 rounded-3xl text-right">
+                <span className="text-[9px] font-black text-slate-400 block mb-1">إجمالي الكراتين المتضررة خارجياً</span>
+                <span className="text-xl font-black text-slate-800">{stats.totalExtCartons} كرتون</span>
+              </div>
+              <div className="bg-slate-50 p-5 rounded-3xl text-right">
+                <span className="text-[9px] font-black text-slate-400 block mb-1">إجمالي الكراتين المتضررة داخلياً</span>
+                <span className="text-xl font-black text-slate-800">{stats.totalIntCartons} كرتون</span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">توزيع الكراتين حسب المراحل</h3>
+              <div className="grid gap-2">
+                {palletTypes.map(type => (
+                  <div key={type.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <span className="text-xs font-bold text-slate-700">{type.stageName}</span>
+                    <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black">
+                      {type.cartonsPerPallet} كرتون / طبلية
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {role === 'factory' && (
         <div className="space-y-3">
