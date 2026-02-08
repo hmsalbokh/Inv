@@ -55,6 +55,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
     }
   }, [role, userCode]);
 
+  const isAdmin = useMemo(() => userCode === 'ADMIN', [userCode]);
+
   const handleAiAnalysis = async () => {
     setIsAnalyzing(true);
     const result = await analyzeInventory(palletTypes, statsRecords);
@@ -69,12 +71,12 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   }, [records, currentTripId]);
 
   const statsRecords = useMemo(() => {
-    return (role === 'monitor' || userCode === 'ADMIN') ? records : records.filter(r => {
+    return (role === 'monitor' || isAdmin) ? records : records.filter(r => {
       if (role === 'factory') return r.palletBarcode.includes(userCode);
       if (role === 'center') return r.destination === userCenter;
       return false;
     });
-  }, [records, role, userCode, userCenter]);
+  }, [records, role, userCode, userCenter, isAdmin]);
 
   const filteredTripRecords = useMemo(() => {
     if (!labelSearch) return currentTripRecords;
@@ -182,8 +184,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
     setTimeout(() => setShowLabels(true), 500);
   };
 
-  const isMonitor = role === 'monitor' || userCode === 'ADMIN';
-  const isAdmin = userCode === 'ADMIN';
+  const isMonitor = role === 'monitor' || isAdmin;
   const showStatsReport = isMonitor || role === 'center';
 
   return (
@@ -204,6 +205,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
             </p>
          </div>
 
+         {/* تحليل الذكاء الاصطناعي متاح فقط لمسئول النظام */}
          {isAdmin && (
             <button 
               onClick={handleAiAnalysis} 
@@ -215,6 +217,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
          )}
       </section>
 
+      {/* قسم نتائج التحليل يظهر فقط لمسئول النظام عند توفر النتيجة */}
       {isAdmin && aiAnalysis && (
         <section className="animate-slideDown">
           <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border-t-4 border-indigo-500 space-y-4">
@@ -323,8 +326,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
               </div>
             </div>
 
+            {/* توزيع الكراتين حسب المراحل يظهر فقط لمسئول النظام */}
             {isAdmin && (
-              <div className="space-y-3">
+              <div className="space-y-3 pt-4 border-t border-slate-50">
                 <h3 className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">توزيع الكراتين حسب المراحل</h3>
                 <div className="grid gap-2">
                   {palletTypes.map(type => (

@@ -2,9 +2,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { PalletType, InventoryRecord } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 export const analyzeInventory = async (palletTypes: PalletType[], records: InventoryRecord[]) => {
+  // تهيئة العميل داخل الدالة لضمان توفر مفتاح API وتجنب أخطاء التحميل الأولي
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
   const dataSummary = palletTypes.map(type => {
     const typeRecords = records.filter(r => r.palletTypeId === type.id);
     const totalPallets = typeRecords.length;
@@ -41,6 +42,6 @@ export const analyzeInventory = async (palletTypes: PalletType[], records: Inven
     return response.text;
   } catch (error) {
     console.error("Gemini analysis error:", error);
-    return "تعذر تحليل بيانات التلف حالياً.";
+    return "تعذر تحليل بيانات التلف حالياً. يرجى التأكد من صلاحية مفتاح الـ API.";
   }
 };
