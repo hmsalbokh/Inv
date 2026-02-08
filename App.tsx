@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PalletType, InventoryRecord, Trip, UserCredentials, UserRole, PressCode, CenterCode, PalletCondition } from './types';
-import { Dashboard } from './components/Dashboard';
+import { Dashboard, SubulLogo } from './components/Dashboard';
 import { Scanner } from './components/Scanner';
 import { Settings } from './components/Settings';
 import { History } from './components/History';
@@ -259,19 +259,16 @@ export const App: React.FC = () => {
     pushToSheet(palletTypes, updatedRecords, updatedTrips, users);
   }, [trips, records, palletTypes, users]);
 
-  // 1. المزامنة عند تحميل التطبيق لأول مرة
   useEffect(() => {
     fetchFromSheet(true);
   }, [fetchFromSheet]);
 
-  // 2. المزامنة عند تسجيل دخول المستخدم
   useEffect(() => {
     if (currentUser) {
       fetchFromSheet(true);
     }
   }, [currentUser, fetchFromSheet]);
 
-  // 3. المزامنة عند العودة للتطبيق (Tab Focus)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -282,7 +279,6 @@ export const App: React.FC = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [fetchFromSheet]);
 
-  // 4. المزامنة الدورية الصامتة كل 60 ثانية
   useEffect(() => {
     const interval = setInterval(() => {
       fetchFromSheet(true);
@@ -324,13 +320,20 @@ export const App: React.FC = () => {
       <ConfirmModal isOpen={!!showNotification} title={showNotification?.title || ''} message={showNotification?.msg || ''} confirmText="فهمت" onConfirm={() => setShowNotification(null)} onCancel={() => setShowNotification(null)} />
       
       <header className={`p-6 shadow-xl rounded-b-[2.5rem] text-white transition-all duration-500 ${currentUser.role === 'factory' ? 'bg-indigo-900' : currentUser.role === 'center' ? 'bg-emerald-900' : 'bg-slate-900'}`}>
-        <div className="flex justify-between items-start">
-          <div className="text-right">
-            <h1 className="text-xl font-black">{currentUser.displayName}</h1>
-            <button onClick={() => setCurrentUser(null)} className="text-[10px] opacity-60 font-black hover:opacity-100 uppercase tracking-widest">خروج من الحساب</button>
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-3">
+             <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-md shadow-inner">
+                <SubulLogo size={24} color="white" />
+             </div>
+             <div className="text-right">
+                <h1 className="text-sm font-black tracking-tight leading-none">{currentUser.displayName}</h1>
+                <button onClick={() => setCurrentUser(null)} className="text-[9px] opacity-60 font-bold hover:opacity-100 uppercase tracking-widest mt-1">تسجيل خروج</button>
+             </div>
           </div>
-          <div className={`px-3 py-1 rounded-full text-[8px] font-black transition-all ${syncing ? 'bg-white/30 animate-pulse' : 'bg-white/10'}`}>
-            {syncing ? 'مزامنة...' : syncError || (lastSyncTime ? `تحديث: ${lastSyncTime}` : 'متصل ✓')}
+          <div className="flex flex-col items-end gap-1">
+             <div className={`px-3 py-1 rounded-full text-[8px] font-black transition-all ${syncing ? 'bg-white/30 animate-pulse' : 'bg-white/10'}`}>
+                {syncing ? 'مزامنة...' : syncError || (lastSyncTime ? `تحديث: ${lastSyncTime}` : 'متصل ✓')}
+             </div>
           </div>
         </div>
       </header>

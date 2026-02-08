@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode } from '../types';
+import { analyzeInventory } from '../services/geminiService';
 
 interface Props {
   palletTypes: PalletType[];
@@ -16,6 +17,21 @@ interface Props {
 
 type LabelSize = '10x15' | '3x4';
 
+export const SubulLogo: React.FC<{ size?: number; color?: string }> = ({ size = 48, color = "white" }) => (
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 30C20 24.4772 24.4772 20 30 20H70C75.5228 20 80 24.4772 80 30V70C80 75.5228 75.5228 80 70 80H30C24.4772 80 20 75.5228 20 70V30Z" fill="url(#paint0_linear)" fillOpacity="0.1"/>
+    <path d="M50 25V75M50 25C50 21 46 18 40 18H25V65H40C46 65 50 68 50 72M50 25C50 21 54 18 60 18H75V65H60C54 65 50 68 50 72" stroke={color} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M30 35H40M30 45H40M60 35H70M60 45H70" stroke={color} strokeWidth="4" strokeLinecap="round"/>
+    <path d="M15 85C30 75 70 95 85 85" stroke={color} strokeWidth="4" strokeLinecap="round" opacity="0.5"/>
+    <defs>
+      <linearGradient id="paint0_linear" x1="20" y1="20" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+        <stop stopColor={color}/>
+        <stop offset="1" stopColor={color} stopOpacity="0"/>
+      </linearGradient>
+    </defs>
+  </svg>
+);
+
 export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, currentTripId, role, userCode, userCenter, onSelectCenter, onNewTrip }) => {
   const [showForm, setShowForm] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
@@ -30,17 +46,35 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   const [isBatchPrinting, setIsBatchPrinting] = useState(false);
   const [selectedSize, setSelectedSize] = useState<LabelSize>('10x15');
 
+  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
   useEffect(() => {
     if (role === 'factory' && (userCode === 'OPK' || userCode === 'UNI')) {
       setPCode(userCode as PressCode);
     }
   }, [role, userCode]);
 
+  const handleAiAnalysis = async () => {
+    setIsAnalyzing(true);
+    const result = await analyzeInventory(palletTypes, statsRecords);
+    setAiAnalysis(result);
+    setIsAnalyzing(false);
+  };
+
   const currentTrip = useMemo(() => trips.find(t => t.id === currentTripId), [trips, currentTripId]);
   
   const currentTripRecords = useMemo(() => {
     return records.filter(r => r.tripId === currentTripId);
   }, [records, currentTripId]);
+
+  const statsRecords = useMemo(() => {
+    return (role === 'monitor' || userCode === 'ADMIN') ? records : records.filter(r => {
+      if (role === 'factory') return r.palletBarcode.includes(userCode);
+      if (role === 'center') return r.destination === userCenter;
+      return false;
+    });
+  }, [records, role, userCode, userCenter]);
 
   const filteredTripRecords = useMemo(() => {
     if (!labelSearch) return currentTripRecords;
@@ -52,25 +86,18 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   }, [currentTripRecords, labelSearch, palletTypes]);
 
   const stats = useMemo(() => {
-    const relevantRecords = (role === 'monitor' || userCode === 'ADMIN') ? records : records.filter(r => {
-      if (role === 'factory') return r.palletBarcode.includes(userCode);
-      if (role === 'center') return r.destination === userCenter;
-      return false;
-    });
-
-    const received = relevantRecords.filter(r => r.status === 'received');
+    const received = statsRecords.filter(r => r.status === 'received');
 
     return { 
-      total: relevantRecords.length, 
+      total: statsRecords.length, 
       received: received.length,
       damaged: received.filter(r => r.condition && r.condition !== 'intact').length,
       extDamaged: received.filter(r => r.condition === 'external_box_damage' || r.condition === 'both').length,
       intDamaged: received.filter(r => r.condition === 'internal_content_damage' || r.condition === 'both').length,
-      bothDamaged: received.filter(r => r.condition === 'both').length,
       totalExtCartons: received.reduce((acc, r) => acc + (r.externalDamageQty || 0), 0),
       totalIntCartons: received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0),
     };
-  }, [records, role, userCode, userCenter]);
+  }, [statsRecords]);
 
   const centerLabels: Record<CenterCode, string> = { 'DMM': 'مركز الدمام', 'RYD': 'مركز الرياض', 'JED': 'مركز جدة' };
   const pressLabels: Record<PressCode, string> = { 'OPK': 'مطبعة العبيكان', 'UNI': 'المطبعة المتحدة' };
@@ -140,7 +167,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
     const content = generateLabelContent(record, selectedSize);
     const printWindow = window.open('', '_blank');
     if (printWindow) {
-        printWindow.document.write(`<html dir="rtl"><head><title>Label</title><link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@700;900&display=swap" rel="stylesheet"><style>@page { size: ${w}mm ${h}mm; margin: 0; } body { margin: 0; padding: 0; width: ${w}mm; height: ${h}mm; }</style></head><body>${content}<script>window.onload = () => { setTimeout(() => { window.print(); window.close(); }, 300); };</script></body></html>`);
+        printWindow.document.write(`<html dir="rtl"><head><title>Label</title><link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@700;900&display=swap" rel="stylesheet"><style>@page { size: ${w}mm ${h}mm; margin: 0; } body { margin: 0; padding: 0; width: ${w}mm; height: ${h}mm; overflow: hidden; }</style></head><body>${content}<script>window.onload = () => { setTimeout(() => { window.print(); window.close(); }, 300); };</script></body></html>`);
         printWindow.document.close();
     }
     setActiveChoiceId(null);
@@ -156,9 +183,52 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   };
 
   const isMonitor = role === 'monitor' || userCode === 'ADMIN';
+  const isAdmin = userCode === 'ADMIN';
+  const showStatsReport = isMonitor || role === 'center';
 
   return (
     <div className="space-y-6 animate-fadeIn pb-10 text-right" dir="rtl">
+      {/* Branding Hero Section */}
+      <section className="bg-gradient-to-br from-indigo-900 to-indigo-800 p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden flex flex-col items-center text-center gap-4">
+         <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl"></div>
+         <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full translate-y-1/2 -translate-x-1/2 blur-2xl"></div>
+         
+         <div className="relative p-2 bg-white/10 backdrop-blur-xl rounded-[2.5rem] shadow-inner border border-white/10">
+            <SubulLogo size={80} color="white" />
+         </div>
+         
+         <div className="space-y-1 relative z-10">
+            <h2 className="text-2xl font-black text-white leading-tight">سبل للخدمات اللوجستية</h2>
+            <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-[0.3em]">
+               {role === 'center' ? `إدارة استلام ${centerLabels[userCenter!]}` : 'نظام تتبع الكتب المدرسية'}
+            </p>
+         </div>
+
+         {isAdmin && (
+            <button 
+              onClick={handleAiAnalysis} 
+              disabled={isAnalyzing}
+              className={`mt-2 px-6 py-2.5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white text-[10px] font-black flex items-center gap-2 hover:bg-white/20 transition-all active:scale-95 ${isAnalyzing ? 'animate-pulse' : ''}`}
+            >
+              {isAnalyzing ? 'جاري التحليل...' : '✨ تحليل الذكاء الاصطناعي'}
+            </button>
+         )}
+      </section>
+
+      {isAdmin && aiAnalysis && (
+        <section className="animate-slideDown">
+          <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border-t-4 border-indigo-500 space-y-4">
+            <div className="flex justify-between items-center border-b pb-3">
+               <h3 className="text-sm font-black text-indigo-900">✨ توصيات ذكاء سبل</h3>
+               <button onClick={() => setAiAnalysis(null)} className="text-[10px] font-bold text-slate-400">إغلاق</button>
+            </div>
+            <div className="text-xs leading-relaxed text-slate-600 font-bold whitespace-pre-line">
+               {aiAnalysis}
+            </div>
+          </div>
+        </section>
+      )}
+
       {(activeChoiceId || isBatchPrinting) && (
         <div className="fixed inset-0 z-[6000] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-6 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-center border-4 border-indigo-900">
@@ -208,7 +278,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
         <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center">
           <span className="text-3xl mb-2">📦</span>
           <span className="text-xl font-black text-slate-800">{stats.total}</span>
-          <span className="text-[10px] font-bold text-slate-400">إجمالي الطبليات</span>
+          <span className="text-[10px] font-bold text-slate-400">إجمالي {role === 'center' ? 'الوارد' : 'الطبليات'}</span>
         </div>
         <div className="bg-emerald-50 p-6 rounded-[2.5rem] shadow-sm border border-emerald-100 flex flex-col items-center">
           <span className="text-3xl mb-2">✅</span>
@@ -217,10 +287,12 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
         </div>
       </section>
 
-      {isMonitor && (
+      {showStatsReport && (
         <section className="space-y-4 animate-slideDown">
           <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
-            <h2 className="text-lg font-black text-indigo-900 border-b pb-4">📊 تقرير التلفيات المتقدم</h2>
+            <h2 className="text-lg font-black text-indigo-900 border-b pb-4">
+               📊 {role === 'center' ? `إحصائيات ${centerLabels[userCenter!]}` : 'تقرير التلفيات المتقدم'}
+            </h2>
             
             <div className="grid grid-cols-3 gap-3">
                <div className="bg-rose-50 p-4 rounded-3xl text-center border border-rose-100">
@@ -251,19 +323,21 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
               </div>
             </div>
 
-            <div className="space-y-3">
-              <h3 className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">توزيع الكراتين حسب المراحل</h3>
-              <div className="grid gap-2">
-                {palletTypes.map(type => (
-                  <div key={type.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                    <span className="text-xs font-bold text-slate-700">{type.stageName}</span>
-                    <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black">
-                      {type.cartonsPerPallet} كرتون / طبلية
-                    </span>
-                  </div>
-                ))}
+            {isAdmin && (
+              <div className="space-y-3">
+                <h3 className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">توزيع الكراتين حسب المراحل</h3>
+                <div className="grid gap-2">
+                  {palletTypes.map(type => (
+                    <div key={type.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <span className="text-xs font-bold text-slate-700">{type.stageName}</span>
+                      <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black">
+                        {type.cartonsPerPallet} كرتون / طبلية
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </section>
       )}

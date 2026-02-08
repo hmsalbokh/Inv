@@ -41,12 +41,24 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const filteredRecords = useMemo(() => {
     return records.filter(record => {
       let isVisible = false;
-      if (role === 'monitor') isVisible = true;
-      else if (role === 'factory') isVisible = record.palletBarcode.includes(userCode);
-      else if (role === 'center' && userCenter) isVisible = record.destination === userCenter;
       
-      if (isVisible && destinationFilter !== 'ALL') isVisible = record.destination === destinationFilter;
-      if (isVisible && showDamagedOnly) isVisible = record.condition && record.condition !== 'intact';
+      // منطق الفلترة الصارم حسب الدور
+      if (role === 'monitor') {
+        isVisible = true;
+      } else if (role === 'factory') {
+        isVisible = record.palletBarcode.includes(userCode);
+      } else if (role === 'center' && userCenter) {
+        isVisible = record.destination === userCenter;
+      }
+      
+      // إذا كان المستخدم مركز استلام، نلغي تأثير فلتر الوجهة الخارجي لضمان بقائه ضمن مركزه فقط
+      if (isVisible && role !== 'center' && destinationFilter !== 'ALL') {
+        isVisible = record.destination === destinationFilter;
+      }
+      
+      if (isVisible && showDamagedOnly) {
+        isVisible = record.condition && record.condition !== 'intact';
+      }
       
       return isVisible;
     }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
@@ -176,88 +188,105 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
 
       <div className="px-4 space-y-4 pt-2">
         <div className="flex justify-between items-center">
-          <h2 className="text-xl font-black text-slate-800">سجل التحركات</h2>
+          <h2 className="text-xl font-black text-slate-800">
+             {role === 'center' ? `سجل استلام ${centerLabels[userCenter!]}` : 'سجل التحركات'}
+          </h2>
           <span className="bg-slate-200 text-slate-700 px-3 py-1 rounded-full text-[10px] font-black">{filteredRecords.length} سجل</span>
         </div>
+        
         <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-          <button onClick={() => setDestinationFilter('ALL')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === 'ALL' ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>الكل</button>
-          {Object.entries(centerLabels).map(([code, label]) => (
-            <button key={code} onClick={() => setDestinationFilter(code as CenterCode)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === code ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>{label}</button>
-          ))}
+          {/* إظهار الفلاتر فقط للمراقبين والمطابع */}
+          {role !== 'center' && (
+            <>
+              <button onClick={() => setDestinationFilter('ALL')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === 'ALL' ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>الكل</button>
+              {Object.entries(centerLabels).map(([code, label]) => (
+                <button key={code} onClick={() => setDestinationFilter(code as CenterCode)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === code ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>{label}</button>
+              ))}
+            </>
+          )}
           <button onClick={() => setShowDamagedOnly(!showDamagedOnly)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${showDamagedOnly ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 border border-rose-100 text-rose-600'}`}>⚠️ المتضرر</button>
         </div>
       </div>
 
       <div className="space-y-4 px-4">
-        {filteredRecords.map(record => {
-          const isExpanded = expandedId === record.id;
-          const cond = getConditionLabel(record.condition);
-          const pType = palletTypes.find(t => t.id === record.palletTypeId);
+        {filteredRecords.length === 0 ? (
+          <div className="py-20 text-center space-y-3 bg-white rounded-[3rem] border border-dashed border-slate-200">
+             <div className="text-4xl opacity-20">📂</div>
+             <p className="text-slate-400 font-bold text-xs">لا توجد سجلات متاحة حالياً</p>
+          </div>
+        ) : (
+          filteredRecords.map(record => {
+            const isExpanded = expandedId === record.id;
+            const cond = getConditionLabel(record.condition);
+            const pType = palletTypes.find(t => t.id === record.palletTypeId);
 
-          return (
-            <div key={record.id} className={`bg-white rounded-[2.5rem] shadow-sm border transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-2 ring-indigo-500 border-transparent' : 'border-slate-100'}`}>
-              <div onClick={() => setExpandedId(isExpanded ? null : record.id)} className={`p-6 flex justify-between items-center cursor-pointer active:bg-slate-50 ${isExpanded ? 'bg-indigo-50/30' : 'bg-white'}`}>
-                <div className="text-right space-y-1">
-                  <h3 className="text-sm font-black text-slate-800">{pType?.stageName}</h3>
+            return (
+              <div key={record.id} className={`bg-white rounded-[2.5rem] shadow-sm border transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-2 ring-indigo-500 border-transparent' : 'border-slate-100'}`}>
+                <div onClick={() => setExpandedId(isExpanded ? null : record.id)} className={`p-6 flex justify-between items-center cursor-pointer active:bg-slate-50 ${isExpanded ? 'bg-indigo-50/30' : 'bg-white'}`}>
+                  <div className="text-right space-y-1">
+                    <h3 className="text-sm font-black text-slate-800">{pType?.stageName}</h3>
+                    <div className="flex items-center gap-2">
+                       <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-widest">{record.palletBarcode}</span>
+                       <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${cond.color}`}>{cond.text}</span>
+                    </div>
+                  </div>
                   <div className="flex items-center gap-2">
-                     <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-widest">{record.palletBarcode}</span>
-                     <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${cond.color}`}>{cond.text}</span>
+                    <button onClick={(e) => { e.stopPropagation(); setActiveChoiceId(record.id); }} className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center shadow-sm active:scale-95 transition-all text-sm">🖨️</button>
+                    <span className={`text-xs transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={(e) => { e.stopPropagation(); setActiveChoiceId(record.id); }} className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center shadow-sm active:scale-95 transition-all text-sm">🖨️</button>
-                  <span className={`text-xs transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
-                </div>
-              </div>
 
-              {isExpanded && (
-                <div className="px-6 pb-6 pt-2 space-y-4 animate-slideDown border-t border-slate-50">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-slate-50 p-3 rounded-2xl">
-                       <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الحالة</span>
-                       <span className={`text-[10px] font-bold block text-right ${record.status === 'received' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                         {record.status === 'received' ? 'تم الاستلام ✓' : record.status === 'in_transit' ? 'في الطريق 🚚' : 'بانتظار التحميل'}
-                       </span>
+                {isExpanded && (
+                  <div className="px-6 pb-6 pt-2 space-y-4 animate-slideDown border-t border-slate-50">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-slate-50 p-3 rounded-2xl">
+                         <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الحالة</span>
+                         <span className={`text-[10px] font-bold block text-right ${record.status === 'received' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                           {record.status === 'received' ? 'تم الاستلام ✓' : record.status === 'in_transit' ? 'في الطريق 🚚' : 'بانتظار التحميل'}
+                         </span>
+                      </div>
+                      <div className="bg-slate-50 p-3 rounded-2xl">
+                         <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الوجهة</span>
+                         <span className="text-[10px] font-bold text-slate-800 block text-right">{centerLabels[record.destination]}</span>
+                      </div>
                     </div>
-                    <div className="bg-slate-50 p-3 rounded-2xl">
-                       <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الوجهة</span>
-                       <span className="text-[10px] font-bold text-slate-800 block text-right">{centerLabels[record.destination]}</span>
-                    </div>
-                  </div>
 
-                  <button 
-                    onClick={() => setBatchPrintTripId(record.tripId)}
-                    className="w-full bg-indigo-50 text-indigo-700 border border-indigo-100 py-3 rounded-2xl text-[10px] font-black flex items-center justify-center gap-2 active:scale-95 transition-all"
-                  >
-                    <span>📦 طباعة كافة ملصقات هذه الرحلة</span>
-                  </button>
+                    {role !== 'center' && (
+                      <button 
+                        onClick={() => setBatchPrintTripId(record.tripId)}
+                        className="w-full bg-indigo-50 text-indigo-700 border border-indigo-100 py-3 rounded-2xl text-[10px] font-black flex items-center justify-center gap-2 active:scale-95 transition-all"
+                      >
+                        <span>📦 طباعة كافة ملصقات هذه الرحلة</span>
+                      </button>
+                    )}
 
-                  {(record.condition && record.condition !== 'intact') && (
-                    <div className="bg-rose-50 border border-rose-100 p-4 rounded-3xl space-y-3">
-                       <span className="text-[11px] font-black text-rose-800 block text-right">⚠️ تقرير الأضرار</span>
-                       <div className="grid grid-cols-2 gap-2">
-                          {record.externalDamageQty ? <div className="bg-white/60 p-2 rounded-xl text-center"><span className="text-[8px] font-black text-slate-500 block">تلف خارجي</span><span className="text-xs font-black text-rose-700">{record.externalDamageQty}</span></div> : null}
-                          {record.internalDamageQty ? <div className="bg-white/60 p-2 rounded-xl text-center"><span className="text-[8px] font-black text-slate-500 block">تلف داخلي</span><span className="text-xs font-black text-rose-700">{record.internalDamageQty}</span></div> : null}
-                       </div>
-                       {record.photos && record.photos.length > 0 && (
-                         <div className="space-y-2">
-                            <span className="text-[10px] font-black text-rose-900 block text-right">📸 الصور:</span>
-                            <div className="grid grid-cols-3 gap-2">
-                              {record.photos.map((url, i) => (
-                                <div key={i} onClick={() => setPreviewImageUrl(url)} className="aspect-square bg-white rounded-xl overflow-hidden border border-rose-200 cursor-pointer shadow-sm active:scale-95">
-                                  <img src={url} className="w-full h-full object-cover" alt="evidence" />
-                                </div>
-                              ))}
-                            </div>
+                    {(record.condition && record.condition !== 'intact') && (
+                      <div className="bg-rose-50 border border-rose-100 p-4 rounded-3xl space-y-3">
+                         <span className="text-[11px] font-black text-rose-800 block text-right">⚠️ تقرير الأضرار</span>
+                         <div className="grid grid-cols-2 gap-2">
+                            {record.externalDamageQty ? <div className="bg-white/60 p-2 rounded-xl text-center"><span className="text-[8px] font-black text-slate-500 block">تلف خارجي</span><span className="text-xs font-black text-rose-700">{record.externalDamageQty}</span></div> : null}
+                            {record.internalDamageQty ? <div className="bg-white/60 p-2 rounded-xl text-center"><span className="text-[8px] font-black text-slate-500 block">تلف داخلي</span><span className="text-xs font-black text-rose-700">{record.internalDamageQty}</span></div> : null}
                          </div>
-                       )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                         {record.photos && record.photos.length > 0 && (
+                           <div className="space-y-2">
+                              <span className="text-[10px] font-black text-rose-900 block text-right">📸 الصور:</span>
+                              <div className="grid grid-cols-3 gap-2">
+                                {record.photos.map((url, i) => (
+                                  <div key={i} onClick={() => setPreviewImageUrl(url)} className="aspect-square bg-white rounded-xl overflow-hidden border border-rose-200 cursor-pointer shadow-sm active:scale-95">
+                                    <img src={url} className="w-full h-full object-cover" alt="evidence" />
+                                  </div>
+                                ))}
+                              </div>
+                           </div>
+                         )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
