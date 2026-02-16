@@ -50,7 +50,6 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const centerOptions = useMemo(() => users.filter(u => u.role === 'center'), [users]);
-  const pressOptions = useMemo(() => users.filter(u => u.role === 'factory'), [users]);
 
   useEffect(() => {
     if (centerOptions.length > 0 && !cCode) setCCode(centerOptions[0].code);
@@ -74,10 +73,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   };
 
   const currentTrip = useMemo(() => trips.find(t => t.id === currentTripId), [trips, currentTripId]);
-  
-  const currentTripRecords = useMemo(() => {
-    return records.filter(r => r.tripId === currentTripId);
-  }, [records, currentTripId]);
+  const currentTripRecords = useMemo(() => records.filter(r => r.tripId === currentTripId), [records, currentTripId]);
 
   const stats = useMemo(() => {
     const received = statsRecords.filter(r => r.status === 'received');
@@ -88,18 +84,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
       const totalCartons = palletCount * type.cartonsPerPallet;
       const totalBundles = totalCartons * type.bundlesPerCarton;
       
-      return {
-        ...type,
-        palletCount,
-        totalCartons,
-        totalBundles
-      };
+      return { ...type, palletCount, totalCartons, totalBundles };
     }).filter(s => s.palletCount > 0);
 
     const totalBundles = stageSummary.reduce((acc, s) => acc + s.totalBundles, 0);
     const totalCartons = stageSummary.reduce((acc, s) => acc + s.totalCartons, 0);
 
-    // حساب إجمالي عدد الكراتين المتضررة فعلياً
+    // حساب إجمالي عدد الكراتين المتضررة بدقة
     const totalExtDamagedCartons = received.reduce((acc, r) => acc + (r.externalDamageQty || 0), 0);
     const totalIntDamagedCartons = received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0);
     const totalDamagedCartons = totalExtDamagedCartons + totalIntDamagedCartons;
@@ -110,11 +101,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
       totalCartons,
       totalBundles,
       stageSummary,
-      // عدد الكراتين التالفة الإجمالي (خارجي + محتوى)
       totalDamagedCartons,
       totalExtDamagedCartons,
       totalIntDamagedCartons,
-      // عدد الطبليات التي تحتوي على تلف (للإحصاء فقط)
       palletsWithDamage: received.filter(r => r.condition && r.condition !== 'intact').length,
     };
   }, [statsRecords, palletTypes]);
@@ -207,28 +196,19 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
 
   return (
     <div className="space-y-6 animate-fadeIn pb-10 text-right" dir="rtl">
-      {/* Branding Hero Section */}
       <section className="bg-gradient-to-br from-indigo-900 to-indigo-800 p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden flex flex-col items-center text-center gap-4">
          <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl"></div>
-         <div className="absolute bottom-0 left-0 w-32 h-32 bg-indigo-500/10 rounded-full translate-y-1/2 -translate-x-1/2 blur-2xl"></div>
-         
          <div className="relative p-2 bg-white/10 backdrop-blur-xl rounded-[2.5rem] shadow-inner border border-white/10">
             <SubulLogo size={80} color="white" />
          </div>
-         
          <div className="space-y-1 relative z-10">
             <h2 className="text-2xl font-black text-white leading-tight">سبل للخدمات اللوجستية</h2>
             <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-[0.3em]">
                {role === 'center' ? `إدارة استلام ${getDisplayName(userCenter || '')}` : 'نظام تتبع الكتب المدرسية'}
             </p>
          </div>
-
          {isAdmin && (
-            <button 
-              onClick={handleAiAnalysis} 
-              disabled={isAnalyzing}
-              className={`mt-2 px-6 py-2.5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white text-[10px] font-black flex items-center gap-2 hover:bg-white/20 transition-all active:scale-95 ${isAnalyzing ? 'animate-pulse' : ''}`}
-            >
+            <button onClick={handleAiAnalysis} disabled={isAnalyzing} className={`mt-2 px-6 py-2.5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white text-[10px] font-black flex items-center gap-2 hover:bg-white/20 transition-all active:scale-95 ${isAnalyzing ? 'animate-pulse' : ''}`}>
               {isAnalyzing ? 'جاري التحليل...' : '✨ تحليل الذكاء الاصطناعي'}
             </button>
          )}
@@ -241,14 +221,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
                <h3 className="text-sm font-black text-indigo-900">✨ توصيات ذكاء سبل</h3>
                <button onClick={() => setAiAnalysis(null)} className="text-[10px] font-bold text-slate-400">إغلاق</button>
             </div>
-            <div className="text-xs leading-relaxed text-slate-600 font-bold whitespace-pre-line">
-               {aiAnalysis}
-            </div>
+            <div className="text-xs leading-relaxed text-slate-600 font-bold whitespace-pre-line">{aiAnalysis}</div>
           </div>
         </section>
       )}
 
-      {/* Summary Cards */}
       <section className="grid grid-cols-2 gap-4">
         <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center text-center">
           <span className="text-3xl mb-2">📦</span>
@@ -262,19 +239,12 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
         </div>
       </section>
 
-      {/* Detailed Receipt Analysis for Centers */}
       {showStatsReport && (
         <section className="space-y-4 animate-slideDown">
           <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
             <div className="flex justify-between items-center border-b pb-4">
-               <h2 className="text-lg font-black text-indigo-900">
-                  📊 {role === 'center' ? `إحصائيات استلام الكتب` : 'تقرير التلفيات والمخزون'}
-               </h2>
-               <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">
-                 {stats.stageSummary.length} مراحل
-               </div>
+               <h2 className="text-lg font-black text-indigo-900">📊 تقرير التلفيات والمخزون</h2>
             </div>
-            
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-indigo-50 p-5 rounded-3xl text-right border border-indigo-100">
                 <span className="text-[9px] font-black text-indigo-400 block mb-1 uppercase">إجمالي الكتب (كراتين)</span>
@@ -286,40 +256,6 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
               </div>
             </div>
 
-            <div className="space-y-3">
-               <h3 className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest text-right">تحليل الاستلام حسب المرحلة</h3>
-               <div className="grid gap-4">
-                 {stats.stageSummary.length === 0 ? (
-                   <div className="text-center py-6 text-slate-300 font-bold text-xs italic">لا توجد بيانات مستلمة بعد</div>
-                 ) : (
-                   stats.stageSummary.map(stage => (
-                     <div key={stage.id} className="bg-slate-50 rounded-[2rem] p-5 border border-slate-100 hover:border-indigo-200 transition-all group">
-                        <div className="flex justify-between items-start mb-4">
-                           <div className="text-right">
-                              <h4 className="text-xs font-black text-slate-800">{stage.stageName}</h4>
-                              <span className="text-[8px] font-bold text-slate-400">كود: {stage.stageCode}</span>
-                           </div>
-                           <div className="bg-white px-3 py-1.5 rounded-xl shadow-sm border border-slate-100">
-                              <span className="text-[10px] font-black text-indigo-600">{stage.palletCount} طبلية</span>
-                           </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                           <div className="bg-white/60 p-3 rounded-2xl flex justify-between items-center">
-                              <span className="text-[8px] font-black text-slate-400">الكراتين:</span>
-                              <span className="text-xs font-black text-slate-700">{stage.totalCartons}</span>
-                           </div>
-                           <div className="bg-white/60 p-3 rounded-2xl flex justify-between items-center">
-                              <span className="text-[8px] font-black text-slate-400">الحزم:</span>
-                              <span className="text-xs font-black text-emerald-600">{stage.totalBundles}</span>
-                           </div>
-                        </div>
-                     </div>
-                   ))
-                 )}
-               </div>
-            </div>
-
-            {/* Damage Stats Grid - Updated for Cartons instead of Pallets */}
             <div className="grid grid-cols-3 gap-3 pt-4 border-t border-slate-50">
                <div className="bg-rose-50 p-4 rounded-3xl text-center border border-rose-100 flex flex-col items-center">
                   <span className="text-xl block mb-1">⚠️</span>
@@ -337,84 +273,48 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
                   <span className="text-[7px] font-black text-orange-400 block uppercase mt-1">تلف كراتين داخلي</span>
                </div>
             </div>
-            
-            {/* إحصائية فرعية لعدد الطبليات التي بها مشاكل */}
-            {stats.palletsWithDamage > 0 && (
-              <div className="text-center py-2 bg-slate-50 rounded-xl">
-                 <p className="text-[9px] font-bold text-slate-400 italic">ملاحظة: عدد الطبليات المتضررة هو {stats.palletsWithDamage} طبلية.</p>
-              </div>
-            )}
           </div>
         </section>
       )}
 
-      {/* Action Buttons for Factory */}
       {role === 'factory' && (
         <div className="space-y-3">
             {currentTripId && (
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => setShowLabels(true)} className="bg-white border-2 border-indigo-200 text-indigo-900 p-5 rounded-[2.5rem] font-black text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-sm">
-                      👁️ استعراض الملصقات
-                  </button>
-                  <button onClick={() => setIsBatchPrinting(true)} className="bg-indigo-900 text-white p-5 rounded-[2.5rem] font-black text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg">
-                      🖨️ طباعة الكل فوراً
-                  </button>
+                  <button onClick={() => setShowLabels(true)} className="bg-white border-2 border-indigo-200 text-indigo-900 p-5 rounded-[2.5rem] font-black text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-sm">👁️ استعراض الملصقات</button>
+                  <button onClick={() => setIsBatchPrinting(true)} className="bg-indigo-900 text-white p-5 rounded-[2.5rem] font-black text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg">🖨️ طباعة الكل</button>
                 </div>
             )}
-            <button onClick={() => setShowForm(!showForm)} className="w-full bg-white border-2 border-indigo-600 text-indigo-600 p-6 rounded-[2.5rem] font-black text-sm flex items-center justify-center gap-3 shadow-xl hover:bg-indigo-50 transition-all">
-                {showForm ? 'إلغاء' : '➕ إنشاء رحلة توريد جديدة'}
-            </button>
+            <button onClick={() => setShowForm(!showForm)} className="w-full bg-white border-2 border-indigo-600 text-indigo-600 p-6 rounded-[2.5rem] font-black text-sm flex items-center justify-center gap-3 shadow-xl hover:bg-indigo-50 transition-all">{showForm ? 'إلغاء' : '➕ إنشاء رحلة توريد جديدة'}</button>
         </div>
       )}
-      
+
       {showForm && (
         <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl border border-slate-100 space-y-6 animate-slideDown">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1 text-right">
-              <label className="text-[10px] font-black text-slate-400 mr-2">الوجهة (مركز الاستلام)</label>
+              <label className="text-[10px] font-black text-slate-400 mr-2">الوجهة</label>
               <select value={cCode} onChange={e => setCCode(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none ring-1 ring-slate-100">
-                <option value="">اختر المركز...</option>
-                {centerOptions.map(center => (
-                  <option key={center.id} value={center.code}>{center.displayName}</option>
-                ))}
+                {centerOptions.map(center => <option key={center.id} value={center.code}>{center.displayName}</option>)}
               </select>
             </div>
             <div className="space-y-1 text-right">
-              <label className="text-[10px] font-black text-slate-400 mr-2">المطبعة المرسلة</label>
+              <label className="text-[10px] font-black text-slate-400 mr-2">المطبعة</label>
               <div className="w-full bg-slate-100 p-4 rounded-2xl text-xs font-black text-slate-500 text-center">{getDisplayName(pCode)}</div>
-            </div>
-          </div>
-          <div className="space-y-4">
-            <label className="text-[10px] font-black text-slate-400 mr-2 block text-right">المراحل والكميات</label>
-            <div className="grid gap-3 max-h-64 overflow-y-auto pr-2">
-              {palletTypes.map(type => (
-                <div key={type.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-xs font-bold text-slate-700">{type.stageName}</span>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => setSelections(prev => ({ ...prev, [type.id]: Math.max(0, (prev[type.id] || 0) - 1) }))} className="w-8 h-8 bg-white border border-slate-200 rounded-lg text-indigo-600 font-black">-</button>
-                    <span className="text-sm font-black w-8 text-center">{selections[type.id] || 0}</span>
-                    <button onClick={() => setSelections(prev => ({ ...prev, [type.id]: (prev[type.id] || 0) + 1 }))} className="w-8 h-8 bg-white border border-slate-200 rounded-lg text-indigo-600 font-black">+</button>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
           <button onClick={handleNewTripSubmit} className="w-full bg-indigo-900 text-white p-6 rounded-[2rem] font-black text-sm shadow-xl active:scale-95 transition-all">إرسال وتجهيز ملصقات سبل</button>
         </div>
       )}
 
-      {/* Print settings overlay */}
       {(activeChoiceId || isBatchPrinting) && (
         <div className="fixed inset-0 z-[6000] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-6 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-center border-4 border-indigo-900">
              <div className="text-4xl mb-2">📐</div>
              <h3 className="text-xl font-black text-slate-800">{isBatchPrinting ? 'طباعة كامل الرحلة' : 'إعدادات الطباعة'}</h3>
-             <div className="space-y-2 text-right">
-               <label className="text-[10px] font-black text-slate-400 block uppercase">حجم الورق</label>
-               <div className="flex gap-2">
-                  <button onClick={() => setSelectedSize('3x4')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '3x4' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>3 × 4 إنش</button>
-                  <button onClick={() => setSelectedSize('10x15')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '10x15' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>10 × 15 سم</button>
-               </div>
+             <div className="flex gap-2">
+                <button onClick={() => setSelectedSize('3x4')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '3x4' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>3 × 4 إنش</button>
+                <button onClick={() => setSelectedSize('10x15')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '10x15' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>10 × 15 سم</button>
              </div>
              <button onClick={() => isBatchPrinting ? handlePrintAllBatch() : handlePrintSingle(activeChoiceId!)} className="w-full bg-indigo-900 text-white p-5 rounded-2xl font-black text-sm active:scale-95 transition-all">بدء الطباعة</button>
              <button onClick={() => { setActiveChoiceId(null); setIsBatchPrinting(false); }} className="w-full bg-slate-100 text-slate-500 p-4 rounded-2xl font-black text-xs">إلغاء</button>
@@ -422,14 +322,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
         </div>
       )}
 
-      {/* Trip labels listing overlay */}
       {showLabels && (
         <div className="fixed inset-0 z-[5000] bg-slate-100 flex flex-col animate-fadeIn overflow-hidden">
           <div className="flex flex-col p-6 bg-white border-b shadow-md no-print gap-4">
             <div className="flex justify-between items-center">
-              <div className="text-right">
-                <h3 className="text-lg font-black text-slate-800">ملصقات الرحلة: #{currentTrip?.tripNumber}</h3>
-              </div>
+              <h3 className="text-lg font-black text-slate-800">ملصقات الرحلة: #{currentTrip?.tripNumber}</h3>
               <div className="flex gap-2">
                 <button onClick={() => setIsBatchPrinting(true)} className="bg-indigo-900 text-white px-4 py-2 rounded-xl font-black text-[10px]">🖨️ طباعة الكل</button>
                 <button onClick={() => setShowLabels(false)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl font-black text-[10px]">إغلاق</button>

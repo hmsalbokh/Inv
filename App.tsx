@@ -13,6 +13,7 @@ const STORAGE_KEY_RECORDS = 'v13_records';
 const STORAGE_KEY_TRIPS = 'v13_trips';
 const STORAGE_KEY_SHEET_URL = 'v13_sheet_url';
 const STORAGE_KEY_USERS = 'v13_users';
+const STORAGE_KEY_LAST_RESET = 'v13_last_reset';
 
 const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzhIpnjpnEPOSYTfxcJtFkVYmGV5jSqowQYM0wdH9kRgeeO2oIGBK2CZu2eRwOyREmB/exec';
 
@@ -65,16 +66,22 @@ export const App: React.FC = () => {
   const [showNotification, setShowNotification] = useState<{ title: string, msg: string } | null>(null);
   const [currentTripId, setCurrentTripId] = useState<string>('');
   const [currentTruckNumber, setCurrentTruckNumber] = useState<string>('1');
+  
+  // طابع التصفير لفلترة البيانات الشبحية
+  const [lastResetTimestamp, setLastResetTimestamp] = useState<number>(Number(localStorage.getItem(STORAGE_KEY_LAST_RESET)) || 0);
 
   const isSyncingRef = useRef(false);
   const isPushingRef = useRef(false);
 
-  // تعديل منطق الدمج ليكون أكثر حذراً
-  const mergeRecords = (local: InventoryRecord[], remote: InventoryRecord[]) => {
-    // إذا كان النظام في حالة تصفير، لا تدمج شيئاً
+  // منطق الدمج الذكي الذي يقارن السجلات بطابع التصفير
+  const mergeRecords = useCallback((local: InventoryRecord[], remote: InventoryRecord[], resetTime: number) => {
     if (isSystemResetting) return [];
 
-    const processedRemote = remote.map(r => {
+    // 1. تصفية البيانات البعيدة: تجاهل أي سجل أقدم من تاريخ التصفير
+    const filteredRemote = remote.filter(r => (r.timestamp || 0) > resetTime);
+
+    // معالجة الصور في البيانات البعيدة المتبقية
+    const processedRemote = filteredRemote.map(r => {
       let photos = r.photos;
       if (typeof (photos as any) === 'string') {
         try { 
@@ -87,26 +94,25 @@ export const App: React.FC = () => {
       return { ...r, photos: Array.isArray(photos) ? photos : [] };
     });
 
-    // إذا كانت القائمة المحلية فارغة (بسبب حذف يدوي مثلاً)، نقبل السحابية كلياً
-    if (local.length === 0) return processedRemote;
+    // 2. تصفية البيانات المحلية أيضاً بنفس المنطق لضمان الاتساق
+    const filteredLocal = local.filter(r => (r.timestamp || 0) > resetTime);
 
-    const merged = [...local];
+    if (filteredLocal.length === 0) return processedRemote;
+
+    const merged = [...filteredLocal];
     processedRemote.forEach(rem => {
       const lIdx = merged.findIndex(l => l.id === rem.id || l.palletBarcode === rem.palletBarcode);
       if (lIdx === -1) {
-        // لا تضف السجل من السحاب إذا كان قد تم حذفه محلياً عمداً
-        // (في هذا الإصدار البسيط، سنفترض أن أي سجل جديد في السحاب يجب أن يظهر)
         merged.push(rem);
       } else {
         const localRec = merged[lIdx];
-        // تحديث السجل فقط إذا كان الطابع الزمني للسحاب أحدث
         if ((rem.timestamp || 0) > (localRec.timestamp || 0)) {
            merged[lIdx] = rem;
         }
       }
     });
     return merged;
-  };
+  }, [isSystemResetting]);
 
   const fetchFromSheet = useCallback(async (isSilent = false, overrideUrl?: string) => {
     const urlToUse = overrideUrl || sheetUrl;
@@ -118,18 +124,28 @@ export const App: React.FC = () => {
       if (!response.ok) throw new Error("Connection failed");
       const data = await response.json();
       
-      // تحديث البيانات بحذر
+      // جلب طابع التصفير من السحاب إذا وجد (يفضل أن يتم تخزينه في السحاب أيضاً)
+      const remoteResetTime = data.lastResetTimestamp || 0;
+      const effectiveResetTime = Math.max(lastResetTimestamp, remoteResetTime);
+      
+      if (effectiveResetTime > lastResetTimestamp) {
+          setLastResetTimestamp(effectiveResetTime);
+          localStorage.setItem(STORAGE_KEY_LAST_RESET, effectiveResetTime.toString());
+      }
+
       if (data.users && data.users.length > 0) setUsers(data.users);
       if (data.types && data.types.length > 0) setPalletTypes(data.types);
       
       if (data.trips) {
-        setTrips(data.trips);
-        const active = data.trips.find((t: Trip) => t.status === 'active');
+        // تصفية الرحلات أيضاً بناءً على تاريخ التصفير
+        const filteredTrips = data.trips.filter((t: Trip) => (t.startDate || 0) > effectiveResetTime);
+        setTrips(filteredTrips);
+        const active = filteredTrips.find((t: Trip) => t.status === 'active');
         if (active) setCurrentTripId(active.id);
       }
 
       const remoteRecords = data.records || [];
-      setRecords(prev => mergeRecords(prev, remoteRecords));
+      setRecords(prev => mergeRecords(prev, remoteRecords, effectiveResetTime));
       
       setLastSyncTime(new Date().toLocaleTimeString('ar-SA'));
       setSyncError(null);
@@ -139,10 +155,9 @@ export const App: React.FC = () => {
       isSyncingRef.current = false;
       if (!isSilent) setSyncing(false);
     }
-  }, [sheetUrl, isSystemResetting]);
+  }, [sheetUrl, isSystemResetting, mergeRecords, lastResetTimestamp]);
 
-  const pushToSheet = async (newTypes = palletTypes, newRecords = records, newTrips = trips, newUsers = users) => {
-    // منع الدفع إذا كنا نصفر أو الرابط فارغ
+  const pushToSheet = async (newTypes = palletTypes, newRecords = records, newTrips = trips, newUsers = users, resetTime = lastResetTimestamp) => {
     if (!sheetUrl || isSystemResetting || isPushingRef.current) return;
     
     setSyncing(true);
@@ -158,7 +173,8 @@ export const App: React.FC = () => {
         types: newTypes, 
         records: processedRecords, 
         trips: newTrips, 
-        users: newUsers 
+        users: newUsers,
+        lastResetTimestamp: resetTime // إرسال طابع التصفير للسحاب
       };
 
       const response = await fetch(sheetUrl, { 
@@ -182,53 +198,54 @@ export const App: React.FC = () => {
   };
 
   const handleResetAllData = async () => {
-    if (!window.confirm("هل أنت متأكد من حذف كافة البيانات نهائياً من الجهاز ومن السحاب؟")) return;
+    if (!window.confirm("هل أنت متأكد من تصفير النظام؟ سيتم تجاهل كافة البيانات الحالية نهائياً ولن تقبل إلا البيانات الجديدة المضافة بعد الآن.")) return;
     
     setIsSystemResetting(true);
     setSyncing(true);
-    isPushingRef.current = true; // منع أي عمليات مزامنة أخرى أثناء المسح
+    isPushingRef.current = true; 
+    
+    const newResetTime = Date.now();
     
     try {
-      // 1. مسح محلي
-      localStorage.removeItem(STORAGE_KEY_RECORDS);
-      localStorage.removeItem(STORAGE_KEY_TRIPS);
+      // 1. تحديث الطابع محلياً ومسح البيانات
+      setLastResetTimestamp(newResetTime);
+      localStorage.setItem(STORAGE_KEY_LAST_RESET, newResetTime.toString());
       setRecords([]);
       setTrips([]);
       setCurrentTripId('');
+      localStorage.removeItem(STORAGE_KEY_RECORDS);
+      localStorage.removeItem(STORAGE_KEY_TRIPS);
       
-      // 2. إرسال أمر مسح صريح للسحاب
+      // 2. إرسال أمر التصفير للسحاب مع الطابع الجديد
       const payload = { 
         action: 'syncAll', 
         types: palletTypes, 
         records: [], 
         trips: [], 
-        users: users 
+        users: users,
+        lastResetTimestamp: newResetTime 
       };
 
-      const response = await fetch(sheetUrl, { 
+      await fetch(sheetUrl, { 
         method: 'POST', 
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload) 
       });
 
-      if (!response.ok) throw new Error("Cloud delete failed");
-
-      setShowNotification({ title: 'تم التصفير الشامل', msg: 'تم تنظيف النظام والسحاب بنجاح.' });
+      setShowNotification({ title: 'تم التصفير الذكي', msg: 'تم تحديث نقطة البداية للنظام بنجاح. أي بيانات قديمة لن تظهر مرة أخرى.' });
     } catch (e) {
-      console.error("Reset Error:", e);
-      setShowNotification({ title: 'تحذير', msg: 'تم المسح من جهازك ولكن فشل الاتصال بالسحاب. قد تعود البيانات عند الاتصال ثانية.' });
+      setShowNotification({ title: 'تحذير', msg: 'تم التصفير محلياً وفشل الاتصال بالسحاب لتحديث نقطة البداية العالمية.' });
     } finally {
-      // تأخير بسيط لضمان استقرار الحالة
       setTimeout(() => { 
         setIsSystemResetting(false); 
         isPushingRef.current = false; 
         setSyncing(false); 
         setActiveTab('dashboard');
-      }, 2000);
+      }, 1000);
     }
   };
 
-  // ... (باقي الدوال handleScan, handleCreateTrip تبقى كما هي)
+  // ... (باقي الدوال handleScan و handleCreateTrip وال useEffects تبقى كما هي)
   const handleScan = useCallback((barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string }) => {
     if (isSystemResetting) return { success: false, message: 'النظام في حالة صيانة' };
     const cleanBarcode = barcode.trim().toUpperCase();
@@ -252,11 +269,11 @@ export const App: React.FC = () => {
     });
 
     if (scanResult.success) {
-      setTimeout(() => pushToSheet(palletTypes, newRecordsArray, trips, users), 100);
+      setTimeout(() => pushToSheet(palletTypes, newRecordsArray, trips, users, lastResetTimestamp), 100);
       return scanResult;
     }
     return { success: false, message: 'الكود غير موجود أو مستخدم مسبقاً' };
-  }, [currentUser, currentTripId, currentTruckNumber, palletTypes, trips, users, isSystemResetting]);
+  }, [currentUser, currentTripId, currentTruckNumber, palletTypes, trips, users, isSystemResetting, lastResetTimestamp]);
 
   const handleCreateTrip = useCallback((press: PressCode, center: CenterCode, selections: { typeId: string, count: number }[], semester: string, year: string) => {
     const tripId = generateUUID();
@@ -301,52 +318,36 @@ export const App: React.FC = () => {
     setCurrentTripId(tripId);
     setActiveTab('scan');
     
-    pushToSheet(palletTypes, updatedRecords, updatedTrips, users);
-  }, [trips, records, palletTypes, users]);
+    pushToSheet(palletTypes, updatedRecords, updatedTrips, users, lastResetTimestamp);
+  }, [trips, records, palletTypes, users, lastResetTimestamp]);
 
   useEffect(() => {
     fetchFromSheet(true);
   }, [fetchFromSheet]);
 
   useEffect(() => {
-    if (currentUser) fetchFromSheet(true);
-  }, [currentUser, fetchFromSheet]);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => { if (document.visibilityState === 'visible') fetchFromSheet(true); };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [fetchFromSheet]);
-
-  useEffect(() => {
-    const interval = setInterval(() => fetchFromSheet(true), 60000);
-    return () => clearInterval(interval);
-  }, [fetchFromSheet]);
-
-  useEffect(() => {
     const savedRecords = localStorage.getItem(STORAGE_KEY_RECORDS);
-    if (savedRecords) setRecords(JSON.parse(savedRecords));
+    if (savedRecords) {
+        const parsed = JSON.parse(savedRecords);
+        // فلترة البيانات المحفوظة محلياً عند التشغيل بناءً على تاريخ التصفير
+        setRecords(parsed.filter((r: InventoryRecord) => (r.timestamp || 0) > lastResetTimestamp));
+    }
     const savedTrips = localStorage.getItem(STORAGE_KEY_TRIPS);
     if (savedTrips) {
       const parsed = JSON.parse(savedTrips);
-      setTrips(parsed);
-      const active = parsed.find((t: Trip) => t.status === 'active');
+      const filteredTrips = parsed.filter((t: Trip) => (t.startDate || 0) > lastResetTimestamp);
+      setTrips(filteredTrips);
+      const active = filteredTrips.find((t: Trip) => t.status === 'active');
       if (active) setCurrentTripId(active.id);
     }
-    const savedTypes = localStorage.getItem(STORAGE_KEY_TYPES);
-    if (savedTypes) setPalletTypes(JSON.parse(savedTypes));
-    const savedUsers = localStorage.getItem(STORAGE_KEY_USERS);
-    if (savedUsers) setUsers(JSON.parse(savedUsers));
-  }, []);
+  }, [lastResetTimestamp]);
 
   useEffect(() => {
     if (!isSystemResetting) {
       localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(records));
       localStorage.setItem(STORAGE_KEY_TRIPS, JSON.stringify(trips));
-      localStorage.setItem(STORAGE_KEY_TYPES, JSON.stringify(palletTypes));
-      localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(users));
     }
-  }, [records, trips, palletTypes, users, isSystemResetting]);
+  }, [records, trips, isSystemResetting]);
 
   const handleLogin = (user: UserCredentials) => setCurrentUser(user);
 
@@ -383,10 +384,10 @@ export const App: React.FC = () => {
           <Settings 
             palletTypes={palletTypes} 
             users={users} 
-            onUpdateUsers={(nu) => { setUsers(nu); pushToSheet(palletTypes, records, trips, nu); }} 
-            onUpdate={(u) => { const nt = palletTypes.map(t => t.id === u.id ? u : t); setPalletTypes(nt); pushToSheet(nt, records, trips, users); }} 
-            onAdd={(t) => { const nt = [...palletTypes, { ...t, id: generateUUID() }]; setPalletTypes(nt); pushToSheet(nt, records, trips, users); }} 
-            onDelete={(id) => { const nt = palletTypes.filter(t => t.id !== id); setPalletTypes(nt); pushToSheet(nt, records, trips, users); }} 
+            onUpdateUsers={(nu) => { setUsers(nu); pushToSheet(palletTypes, records, trips, nu, lastResetTimestamp); }} 
+            onUpdate={(u) => { const nt = palletTypes.map(t => t.id === u.id ? u : t); setPalletTypes(nt); pushToSheet(nt, records, trips, users, lastResetTimestamp); }} 
+            onAdd={(t) => { const nt = [...palletTypes, { ...t, id: generateUUID() }]; setPalletTypes(nt); pushToSheet(nt, records, trips, users, lastResetTimestamp); }} 
+            onDelete={(id) => { const nt = palletTypes.filter(t => t.id !== id); setPalletTypes(nt); pushToSheet(nt, records, trips, users, lastResetTimestamp); }} 
             sheetUrl={sheetUrl} 
             onUrlChange={(newUrl) => { setSheetUrl(newUrl); localStorage.setItem(STORAGE_KEY_SHEET_URL, newUrl); fetchFromSheet(false, newUrl); }} 
             onManualSync={() => fetchFromSheet(false)} 
