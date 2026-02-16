@@ -3,7 +3,6 @@ import { GoogleGenAI } from "@google/genai";
 import { PalletType, InventoryRecord } from "../types";
 
 export const analyzeInventory = async (palletTypes: PalletType[], records: InventoryRecord[]) => {
-  // تهيئة العميل داخل الدالة لضمان توفر مفتاح API وتجنب أخطاء التحميل الأولي
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const dataSummary = palletTypes.map(type => {
@@ -17,20 +16,21 @@ export const analyzeInventory = async (palletTypes: PalletType[], records: Inven
       total: totalPallets,
       received: received.length,
       damaged: damaged,
-      cartons: totalPallets * type.cartonsPerPallet
+      cartons: totalPallets * type.cartonsPerPallet,
+      bundles: totalPallets * type.cartonsPerPallet * (type.bundlesPerCarton || 0)
     };
   });
 
   const totalDamaged = records.filter(r => r.condition && r.condition !== 'intact').length;
 
-  const prompt = `بصفتك خبير في الخدمات اللوجستية، حلل بيانات المخزون التالية:
+  const prompt = `بصفتك خبير في الخدمات اللوجستية وإدارة مخازن الكتب، حلل بيانات المخزون التالية:
   ${JSON.stringify(dataSummary)}
-  إجمالي الشحنات المتضررة: ${totalDamaged}
+  إجمالي الشحنات (الطبليات) المتضررة: ${totalDamaged}
   
   المطلوب:
-  1. تحليل نسبة التلف مقارنة بالاستلام.
-  2. تحديد المرحلة الأكثر تضرراً إن وجدت.
-  3. تقديم نصيحة لتقليل التلف أثناء النقل.
+  1. تحليل كفاءة التوزيع بناءً على عدد الحزم والكراتين.
+  2. تقديم توصية حول الجهد البشري المطلوب لفك الطبليات وتوزيع الحزم بناءً على الإجماليات.
+  3. تحديد المرحلة الأكثر تضرراً وتأثير ذلك على "الحزم" النهائية التي ستصل للمدارس.
   
   أجب باللغة العربية بنقاط مختصرة جداً ومهنية.`;
 

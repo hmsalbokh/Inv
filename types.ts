@@ -1,14 +1,15 @@
 
 export type UserRole = 'factory' | 'center' | 'monitor';
-export type PressCode = 'OPK' | 'UNI';
-export type CenterCode = 'DMM' | 'RYD' | 'JED';
+// جعل الأكواد مرنة لتقبل أي قيم جديدة مضافة من الإعدادات
+export type PressCode = string;
+export type CenterCode = string;
 export type PalletStatus = 'pending' | 'in_transit' | 'received';
 export type PalletCondition = 'intact' | 'damaged' | 'external_box_damage' | 'internal_content_damage' | 'both';
 
 export interface UserCredentials {
   id: string;
   role: UserRole;
-  code: PressCode | CenterCode | 'ADMIN' | 'STATS';
+  code: string; // كود المنشأة (مثلاً: OPK, RYD, KSA_01)
   username: string;
   password: string;
   displayName: string;
@@ -19,6 +20,7 @@ export interface PalletType {
   stageCode: string;
   stageName: string;
   cartonsPerPallet: number;
+  bundlesPerCarton: number;
 }
 
 export interface InventoryRecord {
@@ -34,8 +36,8 @@ export interface InventoryRecord {
   scannedBy: UserRole;
   destination: CenterCode;
   condition?: PalletCondition;
-  externalDamageQty?: number; // عدد الكراتين المتضررة خارجياً
-  internalDamageQty?: number; // عدد الكراتين المتضررة داخلياً
+  externalDamageQty?: number; 
+  internalDamageQty?: number; 
   photos?: string[];
   notes?: string;
   damageDetails?: string; 

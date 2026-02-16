@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition } from '../types';
+import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition, UserCredentials } from '../types';
 
 declare var html2pdf: any;
 
@@ -11,11 +11,12 @@ interface Props {
   role: UserRole;
   userCode: string;
   userCenter: CenterCode | null;
+  users: UserCredentials[]; // إضافة قائمة المستخدمين
 }
 
 type LabelSize = '10x15' | '3x4';
 
-export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter }) => {
+export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
   const [showDamagedOnly, setShowDamagedOnly] = useState(false);
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
@@ -24,8 +25,9 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
-  const centerLabels: Record<CenterCode, string> = { 'DMM': 'مركز الدمام', 'RYD': 'مركز الرياض', 'JED': 'مركز جدة' };
-  const pressLabels: Record<PressCode, string> = { 'OPK': 'مطبعة العبيكان', 'UNI': 'المطبعة المتحدة' };
+  // جلب اسم المنشأة ديناميكياً
+  const getEntityName = (code: string) => users.find(u => u.code === code)?.displayName || code;
+  const centerOptions = useMemo(() => users.filter(u => u.role === 'center'), [users]);
 
   const getConditionLabel = (cond?: PalletCondition) => {
     switch (cond) {
@@ -41,24 +43,12 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const filteredRecords = useMemo(() => {
     return records.filter(record => {
       let isVisible = false;
+      if (role === 'monitor') isVisible = true;
+      else if (role === 'factory') isVisible = record.palletBarcode.includes(userCode);
+      else if (role === 'center' && userCenter) isVisible = record.destination === userCenter;
       
-      // منطق الفلترة الصارم حسب الدور
-      if (role === 'monitor') {
-        isVisible = true;
-      } else if (role === 'factory') {
-        isVisible = record.palletBarcode.includes(userCode);
-      } else if (role === 'center' && userCenter) {
-        isVisible = record.destination === userCenter;
-      }
-      
-      // إذا كان المستخدم مركز استلام، نلغي تأثير فلتر الوجهة الخارجي لضمان بقائه ضمن مركزه فقط
-      if (isVisible && role !== 'center' && destinationFilter !== 'ALL') {
-        isVisible = record.destination === destinationFilter;
-      }
-      
-      if (isVisible && showDamagedOnly) {
-        isVisible = record.condition && record.condition !== 'intact';
-      }
+      if (isVisible && role !== 'center' && destinationFilter !== 'ALL') isVisible = record.destination === destinationFilter;
+      if (isVisible && showDamagedOnly) isVisible = record.condition && record.condition !== 'intact';
       
       return isVisible;
     }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
@@ -97,11 +87,11 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
             <div style="text-align: right; border-left: ${isLarge ? '2px' : '1px'} solid black; padding-left: 5px;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700; color: #555;">المرسل:</div>
-               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900; white-space: nowrap;">${pressLabels[pressCode as PressCode] || '---'}</div>
+               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900; white-space: nowrap;">${getEntityName(pressCode)}</div>
             </div>
             <div style="text-align: right; padding-right: 5px;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700; color: #555;">المستلم:</div>
-               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900; white-space: nowrap;">${centerLabels[record.destination]}</div>
+               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900; white-space: nowrap;">${getEntityName(record.destination)}</div>
             </div>
          </div>
       </div>
@@ -189,18 +179,17 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       <div className="px-4 space-y-4 pt-2">
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-black text-slate-800">
-             {role === 'center' ? `سجل استلام ${centerLabels[userCenter!]}` : 'سجل التحركات'}
+             {role === 'center' ? `سجل استلام ${getEntityName(userCenter || '')}` : 'سجل التحركات'}
           </h2>
           <span className="bg-slate-200 text-slate-700 px-3 py-1 rounded-full text-[10px] font-black">{filteredRecords.length} سجل</span>
         </div>
         
         <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-          {/* إظهار الفلاتر فقط للمراقبين والمطابع */}
           {role !== 'center' && (
             <>
               <button onClick={() => setDestinationFilter('ALL')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === 'ALL' ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>الكل</button>
-              {Object.entries(centerLabels).map(([code, label]) => (
-                <button key={code} onClick={() => setDestinationFilter(code as CenterCode)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === code ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>{label}</button>
+              {centerOptions.map(center => (
+                <button key={center.id} onClick={() => setDestinationFilter(center.code)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === center.code ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>{center.displayName}</button>
               ))}
             </>
           )}
@@ -247,7 +236,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                       </div>
                       <div className="bg-slate-50 p-3 rounded-2xl">
                          <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الوجهة</span>
-                         <span className="text-[10px] font-bold text-slate-800 block text-right">{centerLabels[record.destination]}</span>
+                         <span className="text-[10px] font-bold text-slate-800 block text-right">{getEntityName(record.destination)}</span>
                       </div>
                     </div>
 

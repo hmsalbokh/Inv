@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode } from '../types';
+import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, UserCredentials } from '../types';
 import { analyzeInventory } from '../services/geminiService';
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   role: UserRole;
   userCode: string;
   userCenter: CenterCode | null;
+  users: UserCredentials[];
   onSelectCenter: (center: CenterCode) => void;
   onNewTrip: (press: PressCode, center: CenterCode, selections: { typeId: string, count: number }[], semester: string, year: string) => void;
 }
@@ -32,12 +33,11 @@ export const SubulLogo: React.FC<{ size?: number; color?: string }> = ({ size = 
   </svg>
 );
 
-export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, currentTripId, role, userCode, userCenter, onSelectCenter, onNewTrip }) => {
+export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, currentTripId, role, userCode, userCenter, users, onSelectCenter, onNewTrip }) => {
   const [showForm, setShowForm] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
-  const [labelSearch, setLabelSearch] = useState('');
-  const [pCode, setPCode] = useState<PressCode>('OPK');
-  const [cCode, setCCode] = useState<CenterCode>('DMM');
+  const [pCode, setPCode] = useState<PressCode>(userCode);
+  const [cCode, setCCode] = useState<CenterCode>('');
   const [semester, setSemester] = useState('1'); 
   const [year, setYear] = useState('6'); 
   const [selections, setSelections] = useState<Record<string, number>>({});
@@ -49,13 +49,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
+  const centerOptions = useMemo(() => users.filter(u => u.role === 'center'), [users]);
+  const pressOptions = useMemo(() => users.filter(u => u.role === 'factory'), [users]);
+
   useEffect(() => {
-    if (role === 'factory' && (userCode === 'OPK' || userCode === 'UNI')) {
-      setPCode(userCode as PressCode);
-    }
-  }, [role, userCode]);
+    if (centerOptions.length > 0 && !cCode) setCCode(centerOptions[0].code);
+  }, [centerOptions, cCode]);
 
   const isAdmin = useMemo(() => userCode === 'ADMIN', [userCode]);
+
+  const statsRecords = useMemo(() => {
+    return (role === 'monitor' || isAdmin) ? records : records.filter(r => {
+      if (role === 'factory') return r.palletBarcode.includes(userCode);
+      if (role === 'center') return r.destination === userCenter;
+      return false;
+    });
+  }, [records, role, userCode, userCenter, isAdmin]);
 
   const handleAiAnalysis = async () => {
     setIsAnalyzing(true);
@@ -70,39 +79,47 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
     return records.filter(r => r.tripId === currentTripId);
   }, [records, currentTripId]);
 
-  const statsRecords = useMemo(() => {
-    return (role === 'monitor' || isAdmin) ? records : records.filter(r => {
-      if (role === 'factory') return r.palletBarcode.includes(userCode);
-      if (role === 'center') return r.destination === userCenter;
-      return false;
-    });
-  }, [records, role, userCode, userCenter, isAdmin]);
-
-  const filteredTripRecords = useMemo(() => {
-    if (!labelSearch) return currentTripRecords;
-    const term = labelSearch.toUpperCase();
-    return currentTripRecords.filter(r => {
-      const pType = palletTypes.find(t => t.id === r.palletTypeId);
-      return r.palletBarcode.toUpperCase().includes(term) || (pType?.stageName || '').toUpperCase().includes(term);
-    });
-  }, [currentTripRecords, labelSearch, palletTypes]);
-
   const stats = useMemo(() => {
     const received = statsRecords.filter(r => r.status === 'received');
+    
+    const stageSummary = palletTypes.map(type => {
+      const typeReceived = received.filter(r => r.palletTypeId === type.id);
+      const palletCount = typeReceived.length;
+      const totalCartons = palletCount * type.cartonsPerPallet;
+      const totalBundles = totalCartons * type.bundlesPerCarton;
+      
+      return {
+        ...type,
+        palletCount,
+        totalCartons,
+        totalBundles
+      };
+    }).filter(s => s.palletCount > 0);
+
+    const totalBundles = stageSummary.reduce((acc, s) => acc + s.totalBundles, 0);
+    const totalCartons = stageSummary.reduce((acc, s) => acc + s.totalCartons, 0);
+
+    // حساب إجمالي عدد الكراتين المتضررة فعلياً
+    const totalExtDamagedCartons = received.reduce((acc, r) => acc + (r.externalDamageQty || 0), 0);
+    const totalIntDamagedCartons = received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0);
+    const totalDamagedCartons = totalExtDamagedCartons + totalIntDamagedCartons;
 
     return { 
       total: statsRecords.length, 
       received: received.length,
-      damaged: received.filter(r => r.condition && r.condition !== 'intact').length,
-      extDamaged: received.filter(r => r.condition === 'external_box_damage' || r.condition === 'both').length,
-      intDamaged: received.filter(r => r.condition === 'internal_content_damage' || r.condition === 'both').length,
-      totalExtCartons: received.reduce((acc, r) => acc + (r.externalDamageQty || 0), 0),
-      totalIntCartons: received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0),
+      totalCartons,
+      totalBundles,
+      stageSummary,
+      // عدد الكراتين التالفة الإجمالي (خارجي + محتوى)
+      totalDamagedCartons,
+      totalExtDamagedCartons,
+      totalIntDamagedCartons,
+      // عدد الطبليات التي تحتوي على تلف (للإحصاء فقط)
+      palletsWithDamage: received.filter(r => r.condition && r.condition !== 'intact').length,
     };
-  }, [statsRecords]);
+  }, [statsRecords, palletTypes]);
 
-  const centerLabels: Record<CenterCode, string> = { 'DMM': 'مركز الدمام', 'RYD': 'مركز الرياض', 'JED': 'مركز جدة' };
-  const pressLabels: Record<PressCode, string> = { 'OPK': 'مطبعة العبيكان', 'UNI': 'المطبعة المتحدة' };
+  const getDisplayName = (code: string) => users.find(u => u.code === code)?.displayName || code;
 
   const generateLabelContent = (record: InventoryRecord, size: LabelSize) => {
     const pType = palletTypes.find(t => t.id === record?.palletTypeId);
@@ -135,11 +152,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
             <div style="text-align: right; border-left: ${isLarge ? '2px' : '1px'} solid black; padding-left: 5px;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700; color: #555;">المرسل:</div>
-               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900;">${pressLabels[trip?.pressCode as PressCode] || '---'}</div>
+               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900;">${getDisplayName(trip?.pressCode || '')}</div>
             </div>
             <div style="text-align: right; padding-right: 5px;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700; color: #555;">المستلم:</div>
-               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900;">${centerLabels[trip?.centerCode as CenterCode] || '---'}</div>
+               <div style="font-size: ${isLarge ? '15px' : '9px'}; font-weight: 900;">${getDisplayName(record.destination)}</div>
             </div>
          </div>
       </div>
@@ -179,6 +196,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
     const selectedEntries = Object.entries(selections) as [string, number][];
     const selectedList = selectedEntries.filter(([_, count]) => count > 0).map(([typeId, count]) => ({ typeId, count }));
     if (selectedList.length === 0) { alert('يرجى اختيار مرحلة واحدة على الأقل'); return; }
+    if (!cCode) { alert('يرجى اختيار وجهة الاستلام'); return; }
     onNewTrip(pCode, cCode, selectedList, semester, year);
     setShowForm(false); setSelections({});
     setTimeout(() => setShowLabels(true), 500);
@@ -201,11 +219,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
          <div className="space-y-1 relative z-10">
             <h2 className="text-2xl font-black text-white leading-tight">سبل للخدمات اللوجستية</h2>
             <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-[0.3em]">
-               {role === 'center' ? `إدارة استلام ${centerLabels[userCenter!]}` : 'نظام تتبع الكتب المدرسية'}
+               {role === 'center' ? `إدارة استلام ${getDisplayName(userCenter || '')}` : 'نظام تتبع الكتب المدرسية'}
             </p>
          </div>
 
-         {/* تحليل الذكاء الاصطناعي متاح فقط لمسئول النظام */}
          {isAdmin && (
             <button 
               onClick={handleAiAnalysis} 
@@ -217,7 +234,6 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
          )}
       </section>
 
-      {/* قسم نتائج التحليل يظهر فقط لمسئول النظام عند توفر النتيجة */}
       {isAdmin && aiAnalysis && (
         <section className="animate-slideDown">
           <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border-t-4 border-indigo-500 space-y-4">
@@ -232,120 +248,107 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
         </section>
       )}
 
-      {(activeChoiceId || isBatchPrinting) && (
-        <div className="fixed inset-0 z-[6000] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-6 animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-center border-4 border-indigo-900">
-             <div className="text-4xl mb-2">📐</div>
-             <h3 className="text-xl font-black text-slate-800">{isBatchPrinting ? 'طباعة كامل الرحلة' : 'إعدادات الطباعة'}</h3>
-             <div className="space-y-2 text-right">
-               <label className="text-[10px] font-black text-slate-400 block uppercase">حجم الورق</label>
-               <div className="flex gap-2">
-                  <button onClick={() => setSelectedSize('3x4')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '3x4' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>3 × 4 إنش</button>
-                  <button onClick={() => setSelectedSize('10x15')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '10x15' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>10 × 15 سم</button>
-               </div>
-             </div>
-             <button onClick={() => isBatchPrinting ? handlePrintAllBatch() : handlePrintSingle(activeChoiceId!)} className="w-full bg-indigo-900 text-white p-5 rounded-2xl font-black text-sm active:scale-95 transition-all">بدء الطباعة</button>
-             <button onClick={() => { setActiveChoiceId(null); setIsBatchPrinting(false); }} className="w-full bg-slate-100 text-slate-500 p-4 rounded-2xl font-black text-xs">إلغاء</button>
-          </div>
-        </div>
-      )}
-
-      {showLabels && (
-        <div className="fixed inset-0 z-[5000] bg-slate-100 flex flex-col animate-fadeIn overflow-hidden">
-          <div className="flex flex-col p-6 bg-white border-b shadow-md no-print gap-4">
-            <div className="flex justify-between items-center">
-              <div className="text-right">
-                <h3 className="text-lg font-black text-slate-800">ملصقات الرحلة: #{currentTrip?.tripNumber}</h3>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setIsBatchPrinting(true)} className="bg-indigo-900 text-white px-4 py-2 rounded-xl font-black text-[10px]">🖨️ طباعة الكل</button>
-                <button onClick={() => setShowLabels(false)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl font-black text-[10px]">إغلاق</button>
-              </div>
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-6 items-center bg-slate-200">
-             {filteredTripRecords.map(record => (
-               <div key={record.id} className="w-full max-w-sm bg-white p-5 rounded-3xl shadow-xl flex justify-between items-center">
-                  <div className="text-right">
-                    <div className="text-xs font-black text-slate-800">{palletTypes.find(t => t.id === record.palletTypeId)?.stageName}</div>
-                    <div className="text-[10px] font-bold text-indigo-600 font-mono">{record.palletBarcode}</div>
-                  </div>
-                  <button onClick={() => setActiveChoiceId(record.id)} className="bg-indigo-900 text-white px-5 py-3 rounded-2xl font-black text-xs">🖨️ طباعة</button>
-               </div>
-             ))}
-          </div>
-        </div>
-      )}
-
+      {/* Summary Cards */}
       <section className="grid grid-cols-2 gap-4">
-        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center">
+        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center text-center">
           <span className="text-3xl mb-2">📦</span>
           <span className="text-xl font-black text-slate-800">{stats.total}</span>
           <span className="text-[10px] font-bold text-slate-400">إجمالي {role === 'center' ? 'الوارد' : 'الطبليات'}</span>
         </div>
-        <div className="bg-emerald-50 p-6 rounded-[2.5rem] shadow-sm border border-emerald-100 flex flex-col items-center">
+        <div className="bg-emerald-50 p-6 rounded-[2.5rem] shadow-sm border border-emerald-100 flex flex-col items-center text-center">
           <span className="text-3xl mb-2">✅</span>
           <span className="text-xl font-black text-emerald-700">{stats.received}</span>
           <span className="text-[10px] font-bold text-emerald-500">تم استلامها</span>
         </div>
       </section>
 
+      {/* Detailed Receipt Analysis for Centers */}
       {showStatsReport && (
         <section className="space-y-4 animate-slideDown">
           <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
-            <h2 className="text-lg font-black text-indigo-900 border-b pb-4">
-               📊 {role === 'center' ? `إحصائيات ${centerLabels[userCenter!]}` : 'تقرير التلفيات المتقدم'}
-            </h2>
+            <div className="flex justify-between items-center border-b pb-4">
+               <h2 className="text-lg font-black text-indigo-900">
+                  📊 {role === 'center' ? `إحصائيات استلام الكتب` : 'تقرير التلفيات والمخزون'}
+               </h2>
+               <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black uppercase">
+                 {stats.stageSummary.length} مراحل
+               </div>
+            </div>
             
-            <div className="grid grid-cols-3 gap-3">
-               <div className="bg-rose-50 p-4 rounded-3xl text-center border border-rose-100">
-                  <span className="text-xl block">⚠️</span>
-                  <span className="text-lg font-black text-rose-700">{stats.damaged}</span>
-                  <span className="text-[8px] font-black text-rose-400 block uppercase">إجمالي التالف</span>
-               </div>
-               <div className="bg-amber-50 p-4 rounded-3xl text-center border border-amber-100">
-                  <span className="text-xl block">📦</span>
-                  <span className="text-lg font-black text-amber-700">{stats.extDamaged}</span>
-                  <span className="text-[8px] font-black text-amber-400 block uppercase">تلف خارجي</span>
-               </div>
-               <div className="bg-orange-50 p-4 rounded-3xl text-center border border-orange-100">
-                  <span className="text-xl block">📖</span>
-                  <span className="text-lg font-black text-orange-700">{stats.intDamaged}</span>
-                  <span className="text-[8px] font-black text-orange-400 block uppercase">تلف داخلي</span>
-               </div>
-            </div>
-
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-slate-50 p-5 rounded-3xl text-right">
-                <span className="text-[9px] font-black text-slate-400 block mb-1">إجمالي الكراتين المتضررة خارجياً</span>
-                <span className="text-xl font-black text-slate-800">{stats.totalExtCartons} كرتون</span>
+              <div className="bg-indigo-50 p-5 rounded-3xl text-right border border-indigo-100">
+                <span className="text-[9px] font-black text-indigo-400 block mb-1 uppercase">إجمالي الكتب (كراتين)</span>
+                <span className="text-xl font-black text-indigo-900">{stats.totalCartons.toLocaleString()} كرتون</span>
               </div>
-              <div className="bg-slate-50 p-5 rounded-3xl text-right">
-                <span className="text-[9px] font-black text-slate-400 block mb-1">إجمالي الكراتين المتضررة داخلياً</span>
-                <span className="text-xl font-black text-slate-800">{stats.totalIntCartons} كرتون</span>
+              <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100">
+                <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الحزم</span>
+                <span className="text-xl font-black text-emerald-700">{stats.totalBundles.toLocaleString()} حزمة</span>
               </div>
             </div>
 
-            {/* توزيع الكراتين حسب المراحل يظهر فقط لمسئول النظام */}
-            {isAdmin && (
-              <div className="space-y-3 pt-4 border-t border-slate-50">
-                <h3 className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest">توزيع الكراتين حسب المراحل</h3>
-                <div className="grid gap-2">
-                  {palletTypes.map(type => (
-                    <div key={type.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <span className="text-xs font-bold text-slate-700">{type.stageName}</span>
-                      <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black">
-                        {type.cartonsPerPallet} كرتون / طبلية
-                      </span>
-                    </div>
-                  ))}
-                </div>
+            <div className="space-y-3">
+               <h3 className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest text-right">تحليل الاستلام حسب المرحلة</h3>
+               <div className="grid gap-4">
+                 {stats.stageSummary.length === 0 ? (
+                   <div className="text-center py-6 text-slate-300 font-bold text-xs italic">لا توجد بيانات مستلمة بعد</div>
+                 ) : (
+                   stats.stageSummary.map(stage => (
+                     <div key={stage.id} className="bg-slate-50 rounded-[2rem] p-5 border border-slate-100 hover:border-indigo-200 transition-all group">
+                        <div className="flex justify-between items-start mb-4">
+                           <div className="text-right">
+                              <h4 className="text-xs font-black text-slate-800">{stage.stageName}</h4>
+                              <span className="text-[8px] font-bold text-slate-400">كود: {stage.stageCode}</span>
+                           </div>
+                           <div className="bg-white px-3 py-1.5 rounded-xl shadow-sm border border-slate-100">
+                              <span className="text-[10px] font-black text-indigo-600">{stage.palletCount} طبلية</span>
+                           </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                           <div className="bg-white/60 p-3 rounded-2xl flex justify-between items-center">
+                              <span className="text-[8px] font-black text-slate-400">الكراتين:</span>
+                              <span className="text-xs font-black text-slate-700">{stage.totalCartons}</span>
+                           </div>
+                           <div className="bg-white/60 p-3 rounded-2xl flex justify-between items-center">
+                              <span className="text-[8px] font-black text-slate-400">الحزم:</span>
+                              <span className="text-xs font-black text-emerald-600">{stage.totalBundles}</span>
+                           </div>
+                        </div>
+                     </div>
+                   ))
+                 )}
+               </div>
+            </div>
+
+            {/* Damage Stats Grid - Updated for Cartons instead of Pallets */}
+            <div className="grid grid-cols-3 gap-3 pt-4 border-t border-slate-50">
+               <div className="bg-rose-50 p-4 rounded-3xl text-center border border-rose-100 flex flex-col items-center">
+                  <span className="text-xl block mb-1">⚠️</span>
+                  <span className="text-lg font-black text-rose-700 leading-none">{stats.totalDamagedCartons}</span>
+                  <span className="text-[7px] font-black text-rose-400 block uppercase mt-1">إجمالي الكراتين التالفة</span>
+               </div>
+               <div className="bg-amber-50 p-4 rounded-3xl text-center border border-amber-100 flex flex-col items-center">
+                  <span className="text-xl block mb-1">📦</span>
+                  <span className="text-lg font-black text-amber-700 leading-none">{stats.totalExtDamagedCartons}</span>
+                  <span className="text-[7px] font-black text-amber-400 block uppercase mt-1">تلف كراتين خارجي</span>
+               </div>
+               <div className="bg-orange-50 p-4 rounded-3xl text-center border border-orange-100 flex flex-col items-center">
+                  <span className="text-xl block mb-1">📖</span>
+                  <span className="text-lg font-black text-orange-700 leading-none">{stats.totalIntDamagedCartons}</span>
+                  <span className="text-[7px] font-black text-orange-400 block uppercase mt-1">تلف كراتين داخلي</span>
+               </div>
+            </div>
+            
+            {/* إحصائية فرعية لعدد الطبليات التي بها مشاكل */}
+            {stats.palletsWithDamage > 0 && (
+              <div className="text-center py-2 bg-slate-50 rounded-xl">
+                 <p className="text-[9px] font-bold text-slate-400 italic">ملاحظة: عدد الطبليات المتضررة هو {stats.palletsWithDamage} طبلية.</p>
               </div>
             )}
           </div>
         </section>
       )}
 
+      {/* Action Buttons for Factory */}
       {role === 'factory' && (
         <div className="space-y-3">
             {currentTripId && (
@@ -368,14 +371,17 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
         <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl border border-slate-100 space-y-6 animate-slideDown">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1 text-right">
-              <label className="text-[10px] font-black text-slate-400 mr-2">الوجهة</label>
-              <select value={cCode} onChange={e => setCCode(e.target.value as CenterCode)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none ring-1 ring-slate-100">
-                <option value="DMM">مركز الدمام</option><option value="RYD">مركز الرياض</option><option value="JED">مركز جدة</option>
+              <label className="text-[10px] font-black text-slate-400 mr-2">الوجهة (مركز الاستلام)</label>
+              <select value={cCode} onChange={e => setCCode(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none ring-1 ring-slate-100">
+                <option value="">اختر المركز...</option>
+                {centerOptions.map(center => (
+                  <option key={center.id} value={center.code}>{center.displayName}</option>
+                ))}
               </select>
             </div>
             <div className="space-y-1 text-right">
-              <label className="text-[10px] font-black text-slate-400 mr-2">المطبعة</label>
-              <div className="w-full bg-slate-100 p-4 rounded-2xl text-xs font-black text-slate-500 text-center">{pCode}</div>
+              <label className="text-[10px] font-black text-slate-400 mr-2">المطبعة المرسلة</label>
+              <div className="w-full bg-slate-100 p-4 rounded-2xl text-xs font-black text-slate-500 text-center">{getDisplayName(pCode)}</div>
             </div>
           </div>
           <div className="space-y-4">
@@ -394,6 +400,53 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, curren
             </div>
           </div>
           <button onClick={handleNewTripSubmit} className="w-full bg-indigo-900 text-white p-6 rounded-[2rem] font-black text-sm shadow-xl active:scale-95 transition-all">إرسال وتجهيز ملصقات سبل</button>
+        </div>
+      )}
+
+      {/* Print settings overlay */}
+      {(activeChoiceId || isBatchPrinting) && (
+        <div className="fixed inset-0 z-[6000] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-6 animate-fadeIn">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-center border-4 border-indigo-900">
+             <div className="text-4xl mb-2">📐</div>
+             <h3 className="text-xl font-black text-slate-800">{isBatchPrinting ? 'طباعة كامل الرحلة' : 'إعدادات الطباعة'}</h3>
+             <div className="space-y-2 text-right">
+               <label className="text-[10px] font-black text-slate-400 block uppercase">حجم الورق</label>
+               <div className="flex gap-2">
+                  <button onClick={() => setSelectedSize('3x4')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '3x4' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>3 × 4 إنش</button>
+                  <button onClick={() => setSelectedSize('10x15')} className={`flex-1 py-3 rounded-xl font-black text-xs border-2 transition-all ${selectedSize === '10x15' ? 'bg-indigo-900 text-white border-indigo-900' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>10 × 15 سم</button>
+               </div>
+             </div>
+             <button onClick={() => isBatchPrinting ? handlePrintAllBatch() : handlePrintSingle(activeChoiceId!)} className="w-full bg-indigo-900 text-white p-5 rounded-2xl font-black text-sm active:scale-95 transition-all">بدء الطباعة</button>
+             <button onClick={() => { setActiveChoiceId(null); setIsBatchPrinting(false); }} className="w-full bg-slate-100 text-slate-500 p-4 rounded-2xl font-black text-xs">إلغاء</button>
+          </div>
+        </div>
+      )}
+
+      {/* Trip labels listing overlay */}
+      {showLabels && (
+        <div className="fixed inset-0 z-[5000] bg-slate-100 flex flex-col animate-fadeIn overflow-hidden">
+          <div className="flex flex-col p-6 bg-white border-b shadow-md no-print gap-4">
+            <div className="flex justify-between items-center">
+              <div className="text-right">
+                <h3 className="text-lg font-black text-slate-800">ملصقات الرحلة: #{currentTrip?.tripNumber}</h3>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setIsBatchPrinting(true)} className="bg-indigo-900 text-white px-4 py-2 rounded-xl font-black text-[10px]">🖨️ طباعة الكل</button>
+                <button onClick={() => setShowLabels(false)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl font-black text-[10px]">إغلاق</button>
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-6 items-center bg-slate-200">
+             {currentTripRecords.map(record => (
+               <div key={record.id} className="w-full max-w-sm bg-white p-5 rounded-3xl shadow-xl flex justify-between items-center">
+                  <div className="text-right">
+                    <div className="text-xs font-black text-slate-800">{palletTypes.find(t => t.id === record.palletTypeId)?.stageName}</div>
+                    <div className="text-[10px] font-bold text-indigo-600 font-mono">{record.palletBarcode}</div>
+                  </div>
+                  <button onClick={() => setActiveChoiceId(record.id)} className="bg-indigo-900 text-white px-5 py-3 rounded-2xl font-black text-xs">🖨️ طباعة</button>
+               </div>
+             ))}
+          </div>
         </div>
       )}
     </div>

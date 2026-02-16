@@ -17,9 +17,7 @@ const STORAGE_KEY_USERS = 'v13_users';
 const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzhIpnjpnEPOSYTfxcJtFkVYmGV5jSqowQYM0wdH9kRgeeO2oIGBK2CZu2eRwOyREmB/exec';
 
 const generateUUID = () => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -38,18 +36,18 @@ const DEFAULT_USERS: UserCredentials[] = [
 ];
 
 const DEFAULT_TYPES: PalletType[] = [
-  { id: 'p1', stageCode: 'G01', stageName: 'الصف الأول الابتدائي', cartonsPerPallet: 24 },
-  { id: 'p2', stageCode: 'G02', stageName: 'الصف الثاني الابتدائي', cartonsPerPallet: 24 },
-  { id: 'p3', stageCode: 'G03', stageName: 'الصف الثالث الابتدائي', cartonsPerPallet: 24 },
-  { id: 'p4', stageCode: 'G04', stageName: 'الصف الرابع الابتدائي', cartonsPerPallet: 24 },
-  { id: 'p5', stageCode: 'G05', stageName: 'الصف الخامس الابتدائي', cartonsPerPallet: 24 },
-  { id: 'p6', stageCode: 'G06', stageName: 'الصف السادس الابتدائي', cartonsPerPallet: 24 },
-  { id: 'm1', stageCode: 'G07', stageName: 'الصف الأول المتوسط', cartonsPerPallet: 20 },
-  { id: 'm2', stageCode: 'G08', stageName: 'الصف الثاني المتوسط', cartonsPerPallet: 20 },
-  { id: 'm3', stageCode: 'G09', stageName: 'الصف الثالث المتوسط', cartonsPerPallet: 20 },
-  { id: 's1', stageCode: 'G11', stageName: 'الصف الأول الثانوي', cartonsPerPallet: 18 },
-  { id: 's2', stageCode: 'G12', stageName: 'الصف الثاني الثانوي', cartonsPerPallet: 18 },
-  { id: 's3', stageCode: 'G13', stageName: 'الصف الثالث الثانوي', cartonsPerPallet: 18 },
+  { id: 'p1', stageCode: 'G01', stageName: 'الصف الأول الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
+  { id: 'p2', stageCode: 'G02', stageName: 'الصف الثاني الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
+  { id: 'p3', stageCode: 'G03', stageName: 'الصف الثالث الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
+  { id: 'p4', stageCode: 'G04', stageName: 'الصف الرابع الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
+  { id: 'p5', stageCode: 'G05', stageName: 'الصف الخامس الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
+  { id: 'p6', stageCode: 'G06', stageName: 'الصف السادس الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
+  { id: 'm1', stageCode: 'G07', stageName: 'الصف الأول المتوسط', cartonsPerPallet: 20, bundlesPerCarton: 4 },
+  { id: 'm2', stageCode: 'G08', stageName: 'الصف الثاني المتوسط', cartonsPerPallet: 20, bundlesPerCarton: 4 },
+  { id: 'm3', stageCode: 'G09', stageName: 'الصف الثالث المتوسط', cartonsPerPallet: 20, bundlesPerCarton: 4 },
+  { id: 's1', stageCode: 'G11', stageName: 'الصف الأول الثانوي', cartonsPerPallet: 18, bundlesPerCarton: 3 },
+  { id: 's2', stageCode: 'G12', stageName: 'الصف الثاني الثانوي', cartonsPerPallet: 18, bundlesPerCarton: 3 },
+  { id: 's3', stageCode: 'G13', stageName: 'الصف الثالث الثانوي', cartonsPerPallet: 18, bundlesPerCarton: 3 },
 ];
 
 export const App: React.FC = () => {
@@ -71,7 +69,11 @@ export const App: React.FC = () => {
   const isSyncingRef = useRef(false);
   const isPushingRef = useRef(false);
 
+  // تعديل منطق الدمج ليكون أكثر حذراً
   const mergeRecords = (local: InventoryRecord[], remote: InventoryRecord[]) => {
+    // إذا كان النظام في حالة تصفير، لا تدمج شيئاً
+    if (isSystemResetting) return [];
+
     const processedRemote = remote.map(r => {
       let photos = r.photos;
       if (typeof (photos as any) === 'string') {
@@ -85,19 +87,20 @@ export const App: React.FC = () => {
       return { ...r, photos: Array.isArray(photos) ? photos : [] };
     });
 
+    // إذا كانت القائمة المحلية فارغة (بسبب حذف يدوي مثلاً)، نقبل السحابية كلياً
+    if (local.length === 0) return processedRemote;
+
     const merged = [...local];
     processedRemote.forEach(rem => {
       const lIdx = merged.findIndex(l => l.id === rem.id || l.palletBarcode === rem.palletBarcode);
       if (lIdx === -1) {
+        // لا تضف السجل من السحاب إذا كان قد تم حذفه محلياً عمداً
+        // (في هذا الإصدار البسيط، سنفترض أن أي سجل جديد في السحاب يجب أن يظهر)
         merged.push(rem);
       } else {
         const localRec = merged[lIdx];
-        const hasLocalDamageData = (localRec.photos && localRec.photos.length > 0) || (localRec.condition && localRec.condition !== 'intact');
-        const hasRemoteDamageData = (rem.photos && rem.photos.length > 0) || (rem.condition && rem.condition !== 'intact');
-
-        if (hasLocalDamageData && !hasRemoteDamageData && localRec.status === 'received') {
-           merged[lIdx] = { ...rem, photos: localRec.photos, condition: localRec.condition, externalDamageQty: localRec.externalDamageQty, internalDamageQty: localRec.internalDamageQty, notes: localRec.notes, damageDetails: localRec.damageDetails };
-        } else if (rem.timestamp >= (localRec.timestamp || 0)) {
+        // تحديث السجل فقط إذا كان الطابع الزمني للسحاب أحدث
+        if ((rem.timestamp || 0) > (localRec.timestamp || 0)) {
            merged[lIdx] = rem;
         }
       }
@@ -114,15 +117,20 @@ export const App: React.FC = () => {
       const response = await fetch(`${urlToUse}?action=getAll`, { method: 'GET', mode: 'cors' });
       if (!response.ok) throw new Error("Connection failed");
       const data = await response.json();
-      if (data.users) setUsers(data.users);
-      if (data.types) setPalletTypes(data.types);
+      
+      // تحديث البيانات بحذر
+      if (data.users && data.users.length > 0) setUsers(data.users);
+      if (data.types && data.types.length > 0) setPalletTypes(data.types);
+      
       if (data.trips) {
         setTrips(data.trips);
         const active = data.trips.find((t: Trip) => t.status === 'active');
         if (active) setCurrentTripId(active.id);
       }
+
       const remoteRecords = data.records || [];
       setRecords(prev => mergeRecords(prev, remoteRecords));
+      
       setLastSyncTime(new Date().toLocaleTimeString('ar-SA'));
       setSyncError(null);
     } catch (error: any) {
@@ -134,56 +142,93 @@ export const App: React.FC = () => {
   }, [sheetUrl, isSystemResetting]);
 
   const pushToSheet = async (newTypes = palletTypes, newRecords = records, newTrips = trips, newUsers = users) => {
-    if (!sheetUrl || isSystemResetting) return;
+    // منع الدفع إذا كنا نصفر أو الرابط فارغ
+    if (!sheetUrl || isSystemResetting || isPushingRef.current) return;
+    
     setSyncing(true);
     isPushingRef.current = true;
     try {
-      const processedRecords = newRecords.map(r => ({ ...r, photos: Array.isArray(r.photos) ? JSON.stringify(r.photos) : r.photos }));
-      const payload = { action: 'syncAll', types: newTypes, records: processedRecords, trips: newTrips, users: newUsers };
-      await fetch(sheetUrl, { 
+      const processedRecords = newRecords.map(r => ({ 
+        ...r, 
+        photos: Array.isArray(r.photos) ? JSON.stringify(r.photos) : (r.photos || "[]") 
+      }));
+      
+      const payload = { 
+        action: 'syncAll', 
+        types: newTypes, 
+        records: processedRecords, 
+        trips: newTrips, 
+        users: newUsers 
+      };
+
+      const response = await fetch(sheetUrl, { 
         method: 'POST', 
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload) 
       });
+
+      if (!response.ok) throw new Error("Sync failed");
+
       setLastSyncTime(new Date().toLocaleTimeString('ar-SA'));
       setSyncError(null);
     } catch (e: any) {
       setSyncError('⚠️ فشل مزامنة');
     } finally { 
-      setTimeout(() => { isPushingRef.current = false; setSyncing(false); }, 500);
+      setTimeout(() => { 
+        isPushingRef.current = false; 
+        setSyncing(false); 
+      }, 500);
     }
   };
 
   const handleResetAllData = async () => {
+    if (!window.confirm("هل أنت متأكد من حذف كافة البيانات نهائياً من الجهاز ومن السحاب؟")) return;
+    
     setIsSystemResetting(true);
     setSyncing(true);
-    isPushingRef.current = true;
+    isPushingRef.current = true; // منع أي عمليات مزامنة أخرى أثناء المسح
+    
     try {
+      // 1. مسح محلي
       localStorage.removeItem(STORAGE_KEY_RECORDS);
       localStorage.removeItem(STORAGE_KEY_TRIPS);
       setRecords([]);
       setTrips([]);
       setCurrentTripId('');
       
-      const payload = { action: 'syncAll', types: palletTypes, records: [], trips: [], users: users };
-      await fetch(sheetUrl, { 
+      // 2. إرسال أمر مسح صريح للسحاب
+      const payload = { 
+        action: 'syncAll', 
+        types: palletTypes, 
+        records: [], 
+        trips: [], 
+        users: users 
+      };
+
+      const response = await fetch(sheetUrl, { 
         method: 'POST', 
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload) 
       });
-      setShowNotification({ title: 'تم التصفير', msg: 'تم حذف كافة السجلات والرحلات بنجاح.' });
+
+      if (!response.ok) throw new Error("Cloud delete failed");
+
+      setShowNotification({ title: 'تم التصفير الشامل', msg: 'تم تنظيف النظام والسحاب بنجاح.' });
     } catch (e) {
-      setShowNotification({ title: 'خطأ سحابي', msg: 'تم المسح محلياً وفشل التحديث السحابي.' });
+      console.error("Reset Error:", e);
+      setShowNotification({ title: 'تحذير', msg: 'تم المسح من جهازك ولكن فشل الاتصال بالسحاب. قد تعود البيانات عند الاتصال ثانية.' });
     } finally {
+      // تأخير بسيط لضمان استقرار الحالة
       setTimeout(() => { 
         setIsSystemResetting(false); 
         isPushingRef.current = false; 
         setSyncing(false); 
         setActiveTab('dashboard');
-      }, 1500);
+      }, 2000);
     }
   };
 
+  // ... (باقي الدوال handleScan, handleCreateTrip تبقى كما هي)
   const handleScan = useCallback((barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string }) => {
     if (isSystemResetting) return { success: false, message: 'النظام في حالة صيانة' };
     const cleanBarcode = barcode.trim().toUpperCase();
@@ -264,25 +309,17 @@ export const App: React.FC = () => {
   }, [fetchFromSheet]);
 
   useEffect(() => {
-    if (currentUser) {
-      fetchFromSheet(true);
-    }
+    if (currentUser) fetchFromSheet(true);
   }, [currentUser, fetchFromSheet]);
 
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        fetchFromSheet(true);
-      }
-    };
+    const handleVisibilityChange = () => { if (document.visibilityState === 'visible') fetchFromSheet(true); };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [fetchFromSheet]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchFromSheet(true);
-    }, 60000);
+    const interval = setInterval(() => fetchFromSheet(true), 60000);
     return () => clearInterval(interval);
   }, [fetchFromSheet]);
 
@@ -339,9 +376,9 @@ export const App: React.FC = () => {
       </header>
       
       <main className="flex-1 overflow-y-auto p-4 pb-28">
-        {activeTab === 'dashboard' && <Dashboard palletTypes={palletTypes} records={records} trips={trips} currentTripId={currentTripId} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} onSelectCenter={() => {}} onNewTrip={handleCreateTrip} />}
+        {activeTab === 'dashboard' && <Dashboard palletTypes={palletTypes} records={records} trips={trips} currentTripId={currentTripId} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} onSelectCenter={() => {}} onNewTrip={handleCreateTrip} />}
         {activeTab === 'scan' && <Scanner onScan={handleScan} role={currentUser.role} currentTruck={currentTruckNumber} onTruckChange={setCurrentTruckNumber} currentTripId={currentTripId} records={records} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} palletTypes={palletTypes} sheetUrl={sheetUrl} />}
-        {activeTab === 'history' && <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} />}
+        {activeTab === 'history' && <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} />}
         {activeTab === 'settings' && currentUser.code === 'ADMIN' && (
           <Settings 
             palletTypes={palletTypes} 

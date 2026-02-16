@@ -39,7 +39,8 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
   const [stageFormData, setStageFormData] = useState<Omit<PalletType, 'id'>>({
     stageCode: '',
     stageName: '',
-    cartonsPerPallet: 24
+    cartonsPerPallet: 24,
+    bundlesPerCarton: 5
   });
 
   const CORRECT_ADMIN_PASSWORD = 'H0566749388h';
@@ -79,10 +80,10 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
   const handleOpenStageForm = (stage?: PalletType) => {
     if (stage) {
       setEditingStage(stage);
-      setStageFormData({ stageCode: stage.stageCode, stageName: stage.stageName, cartonsPerPallet: stage.cartonsPerPallet });
+      setStageFormData({ stageCode: stage.stageCode, stageName: stage.stageName, cartonsPerPallet: stage.cartonsPerPallet, bundlesPerCarton: stage.bundlesPerCarton || 5 });
     } else {
       setEditingStage(null);
-      setStageFormData({ stageCode: '', stageName: '', cartonsPerPallet: 24 });
+      setStageFormData({ stageCode: '', stageName: '', cartonsPerPallet: 24, bundlesPerCarton: 5 });
     }
     setShowStageForm(true);
   };
@@ -95,6 +96,7 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
 
   return (
     <div className="space-y-6 animate-fadeIn pb-10 text-right" dir="rtl">
+      {/* ... (ConfirmModals and Tabs stay same) */}
       <ConfirmModal isOpen={showResetConfirm} title="تصفير السجلات" message="سيتم حذف كافة السجلات والرحلات بشكل نهائي من الجهاز ومن جوجل شيت. هل أنت متأكد؟" type="danger" onConfirm={async () => { setShowResetConfirm(false); await onResetData(); }} onCancel={() => setShowResetConfirm(false)} />
       <ConfirmModal isOpen={!!showDeleteUserConfirm} title="حذف مستخدم" message="هل تريد حذف هذا الحساب؟ لن يتمكن المستخدم من الدخول بعد الآن." type="danger" onConfirm={() => { onUpdateUsers(users.filter(u => u.id !== showDeleteUserConfirm)); setShowDeleteUserConfirm(null); }} onCancel={() => setShowDeleteUserConfirm(null)} />
       
@@ -177,7 +179,7 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
                   <h3 className="text-xs font-black text-slate-800">{t.stageName}</h3>
                   <div className="flex gap-2 items-center mt-1">
                     <span className="text-[8px] font-black px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-600 uppercase">كود: {t.stageCode}</span>
-                    <span className="text-[8px] font-bold text-slate-400">{t.cartonsPerPallet} كرتون / طبلية</span>
+                    <span className="text-[8px] font-bold text-slate-400">{t.cartonsPerPallet} كرتون | {t.bundlesPerCarton} حزمة/كرتون</span>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -190,7 +192,36 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
         </div>
       )}
 
-      {/* نموذج إضافة/تعديل مستخدم */}
+      {/* نموذج تعديل مرحلة معدل ليشمل عدد الحزم */}
+      {showStageForm && (
+        <div className="fixed inset-0 z-[7000] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-6 animate-fadeIn">
+           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-5 shadow-2xl relative">
+              <h3 className="text-lg font-black text-slate-800">{editingStage ? 'تعديل المرحلة' : 'إضافة مرحلة كتب جديدة'}</h3>
+              <div className="space-y-3">
+                <input type="text" value={stageFormData.stageName} onChange={e => setStageFormData({...stageFormData, stageName: e.target.value})} className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="اسم المرحلة (مثلاً: الصف الأول الابتدائي)" />
+                <div className="grid grid-cols-1 gap-2">
+                   <input type="text" value={stageFormData.stageCode} onChange={e => setStageFormData({...stageFormData, stageCode: e.target.value})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="كود المرحلة (مثلاً: G01)" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                   <div className="space-y-1">
+                      <label className="text-[8px] font-black text-slate-400 block mr-2">كرتون / طبلية</label>
+                      <input type="number" value={stageFormData.cartonsPerPallet} onChange={e => setStageFormData({...stageFormData, cartonsPerPallet: parseInt(e.target.value) || 0})} className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="الكراتين" />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[8px] font-black text-slate-400 block mr-2">حزمة / كرتون</label>
+                      <input type="number" value={stageFormData.bundlesPerCarton} onChange={e => setStageFormData({...stageFormData, bundlesPerCarton: parseInt(e.target.value) || 0})} className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="الحزم" />
+                   </div>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                 <button onClick={handleSaveStage} className="flex-1 bg-indigo-900 text-white p-4 rounded-xl font-black text-xs active:scale-95 transition-all">حفظ المرحلة</button>
+                 <button onClick={() => setShowStageForm(false)} className="bg-slate-100 text-slate-400 px-6 rounded-xl font-black text-xs">إلغاء</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* ... (rest of Settings form stay same) */}
       {showUserForm && (
         <div className="fixed inset-0 z-[7000] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-6 animate-fadeIn">
            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-5 shadow-2xl relative">
@@ -213,26 +244,6 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
               <div className="flex gap-2 pt-2">
                  <button onClick={handleSaveUser} className="flex-1 bg-indigo-900 text-white p-4 rounded-xl font-black text-xs active:scale-95 transition-all">حفظ</button>
                  <button onClick={() => setShowUserForm(false)} className="bg-slate-100 text-slate-400 px-6 rounded-xl font-black text-xs">إلغاء</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {/* نموذج إضافة/تعديل مرحلة */}
-      {showStageForm && (
-        <div className="fixed inset-0 z-[7000] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-6 animate-fadeIn">
-           <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-5 shadow-2xl relative">
-              <h3 className="text-lg font-black text-slate-800">{editingStage ? 'تعديل المرحلة' : 'إضافة مرحلة كتب جديدة'}</h3>
-              <div className="space-y-3">
-                <input type="text" value={stageFormData.stageName} onChange={e => setStageFormData({...stageFormData, stageName: e.target.value})} className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="اسم المرحلة (مثلاً: الصف الأول الابتدائي)" />
-                <div className="grid grid-cols-2 gap-2">
-                   <input type="text" value={stageFormData.stageCode} onChange={e => setStageFormData({...stageFormData, stageCode: e.target.value})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="كود المرحلة (مثلاً: G01)" />
-                   <input type="number" value={stageFormData.cartonsPerPallet} onChange={e => setStageFormData({...stageFormData, cartonsPerPallet: parseInt(e.target.value) || 0})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="الكراتين لكل طبلية" />
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
-                 <button onClick={handleSaveStage} className="flex-1 bg-indigo-900 text-white p-4 rounded-xl font-black text-xs active:scale-95 transition-all">حفظ المرحلة</button>
-                 <button onClick={() => setShowStageForm(false)} className="bg-slate-100 text-slate-400 px-6 rounded-xl font-black text-xs">إلغاء</button>
               </div>
            </div>
         </div>
