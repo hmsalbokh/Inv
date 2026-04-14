@@ -24,7 +24,7 @@ const generateUUID = () => {
 };
 
 interface Props {
-  onScan: (barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string }) => { success: boolean; message: string };
+  onScan: (barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string }) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
   currentTruck: string;
   onTruckChange: (val: string) => void;
   role: 'factory' | 'center' | 'monitor';
@@ -126,7 +126,7 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
     return () => { mounted = false; stopScannerSafely(); };
   }, [isCameraScannerActive]);
 
-  const processBarcode = (barcode: string) => {
+  const processBarcode = async (barcode: string) => {
     if (!barcode || cooldownRef.current) return;
     try {
       const cleanBarcode = barcode.trim().toUpperCase();
@@ -144,7 +144,7 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
         return;
       }
       cooldownRef.current = true;
-      const result = onScan(cleanBarcode);
+      const result = await onScan(cleanBarcode);
       setStatus({ type: result.success ? 'success' : 'error', text: result.message });
       if (result.success) { setFlashSuccess(true); setTimeout(() => setFlashSuccess(false), 400); }
       setTimeout(() => { setStatus({ type: null, text: '' }); cooldownRef.current = false; isProcessingScan.current = false; }, 1000);
@@ -193,7 +193,7 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleConfirmInspection = () => {
+  const handleConfirmInspection = async () => {
     if (isProcessing) return;
     const finalPhotos = photoTrack.filter(p => p.status === 'success' && p.url).map(p => p.url);
     let condition: PalletCondition = 'intact';
@@ -207,6 +207,12 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
       if (hasExternalDamage && extDamagedQty <= 0) { alert('حدد عدد الكراتين المتضررة خارجياً'); return; }
       if (hasInternalDamage && intDamagedQty <= 0) { alert('حدد عدد الكراتين المتضررة داخلياً'); return; }
       
+      // التحقق من وجود صور في حالة التلف
+      if (finalPhotos.length === 0) {
+        alert('يجب إضافة صورة واحدة على الأقل لإثبات التلف');
+        return;
+      }
+      
       if (hasExternalDamage && hasInternalDamage) { 
         condition = 'both'; 
         details = `تلف كراتين مزدوج: خارجي (${finalExtQty}), داخلي (${finalIntQty})`; 
@@ -219,7 +225,7 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
       }
     }
 
-    const result = onScan(activeBarcode, { 
+    const result = await onScan(activeBarcode, { 
       condition, 
       externalDamageQty: finalExtQty, 
       internalDamageQty: finalIntQty, 

@@ -53,3 +53,17 @@ export interface Trip {
   startDate: number;
   status: 'active' | 'completed';
 }
+
+export interface DistributionTrip {
+  id: string;
+  tripNumber: string;
+  date: string; // YYYY-MM-DD
+  originCenter: CenterCode;
+  destinationCity: string;
+  quantities: {
+    palletTypeId: string;
+    cartonCount: number;
+    bundleCount: number;
+  }[];
+  status: 'planned' | 'dispatched';
+}

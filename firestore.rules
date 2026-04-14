@@ -1,0 +1,185 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId}
+// Fields:
+//   - id: string (required)
+//   - role: string (required, ['factory', 'center', 'monitor'])
+//   - code: string (required)
+//   - username: string (required)
+//   - password: string (required)
+//   - displayName: string (required)
+//
+// Collection: palletTypes
+// Document ID: {typeId}
+// Fields:
+//   - id: string (required)
+//   - stageCode: string (required)
+//   - stageName: string (required)
+//   - cartonsPerPallet: number (required)
+//   - bundlesPerCarton: number (required)
+//
+// Collection: trips
+// Document ID: {tripId}
+// Fields:
+//   - id: string (required)
+//   - tripNumber: string (required)
+//   - tripBarcode: string (required)
+//   - pressCode: string (required)
+//   - centerCode: string (required)
+//   - startDate: number (required)
+//   - status: string (required, ['active', 'completed'])
+//
+// Collection: records
+// Document ID: {recordId}
+// Fields:
+//   - id: string (required)
+//   - palletTypeId: string (required)
+//   - palletBarcode: string (required)
+//   - tripId: string (required)
+//   - truckId: string (optional)
+//   - status: string (required, ['pending', 'in_transit', 'received'])
+//   - timestamp: number (required)
+//   - factoryTimestamp: number (optional)
+//   - centerTimestamp: number (optional)
+//   - scannedBy: string (required)
+//   - destination: string (required)
+//   - condition: string (optional)
+//   - externalDamageQty: number (optional)
+//   - internalDamageQty: number (optional)
+//   - photos: list (optional)
+//   - notes: string (optional)
+//   - damageDetails: string (optional)
+//
+// Collection: config
+// Document ID: system
+// Fields:
+//   - lastResetTimestamp: number (required)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "m0931700446@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidRole(role) {
+      return role in ['factory', 'center', 'monitor', 'admin'];
+    }
+
+    function isValidStatus(status) {
+      return status in ['pending', 'in_transit', 'received'];
+    }
+
+    function isValidTripStatus(status) {
+      return status in ['active', 'completed'];
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.id is string && data.id.size() > 0 &&
+             data.role is string && isValidRole(data.role) &&
+             data.code is string && data.code.size() > 0 &&
+             data.username is string && data.username.size() > 0 &&
+             data.displayName is string && data.displayName.size() > 0;
+    }
+
+    function isValidPalletType(data) {
+      return data.id is string && data.stageCode is string &&
+             data.stageName is string && data.stageName.size() < 100 &&
+             data.cartonsPerPallet is number && data.bundlesPerCarton is number;
+    }
+
+    function isValidTrip(data) {
+      return data.id is string && data.tripNumber is string &&
+             data.tripBarcode is string && data.pressCode is string &&
+             data.centerCode is string && data.startDate is number &&
+             data.status is string && isValidTripStatus(data.status);
+    }
+
+    function isValidRecord(data) {
+      return data.id is string && data.palletTypeId is string &&
+             data.palletBarcode is string && data.tripId is string &&
+             data.status is string && isValidStatus(data.status) &&
+             data.timestamp is number && data.scannedBy is string &&
+             data.destination is string &&
+             (!('photos' in data) || data.photos is list) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() < 1000));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+      allow delete: if isAdmin();
+    }
+
+    match /palletTypes/{typeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /trips/{tripId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if isAdmin();
+    }
+
+    match /records/{recordId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if isAdmin();
+    }
+
+    match /config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /distributionTrips/{tripId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

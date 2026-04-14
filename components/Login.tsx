@@ -6,11 +6,12 @@ import { SubulLogo } from './Dashboard';
 interface Props {
   users: UserCredentials[];
   onLogin: (user: UserCredentials) => void;
+  onLoginWithGoogle: () => void;
 }
 
 type LoginCategory = 'center' | 'factory' | 'monitor' | null;
 
-export const Login: React.FC<Props> = ({ users, onLogin }) => {
+export const Login: React.FC<Props> = ({ users, onLogin, onLoginWithGoogle }) => {
   const [category, setCategory] = useState<LoginCategory>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string>('');
   const [username, setUsername] = useState('');
