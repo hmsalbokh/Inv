@@ -214,9 +214,16 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                 <div onClick={() => setExpandedId(isExpanded ? null : record.id)} className={`p-6 flex justify-between items-center cursor-pointer active:bg-slate-50 ${isExpanded ? 'bg-indigo-50/30' : 'bg-white'}`}>
                   <div className="text-right space-y-1">
                     <h3 className="text-sm font-black text-slate-800">{pType?.stageName}</h3>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                        <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-widest">{record.palletBarcode}</span>
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${cond.color}`}>{cond.text}</span>
+                       <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${
+                         record.status === 'received' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
+                         record.status === 'in_transit' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 
+                         'bg-slate-50 text-slate-400 border border-slate-100'
+                       }`}>
+                         {record.status === 'received' ? 'تم الاستلام ✓' : record.status === 'in_transit' ? 'في الطريق 🚚' : 'بانتظار التحميل'}
+                       </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

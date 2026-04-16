@@ -681,20 +681,16 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           <span className="text-3xl font-black text-emerald-700">{stats.received}</span>
           <span className="text-[10px] font-bold text-emerald-500">تم استلامها</span>
         </div>
-        {role !== 'center' && (
-          <>
-            <div className="bg-indigo-50 p-6 rounded-[2.5rem] shadow-sm border border-indigo-100 flex flex-col items-center text-center">
-              <span className="text-3xl mb-2">🏭</span>
-              <span className="text-3xl font-black text-indigo-700">{stats.inFactory}</span>
-              <span className="text-[10px] font-bold text-indigo-500">في المطبعة</span>
-            </div>
-            <div className="bg-amber-50 p-6 rounded-[2.5rem] shadow-sm border border-amber-100 flex flex-col items-center text-center">
-              <span className="text-3xl mb-2">🚚</span>
-              <span className="text-3xl font-black text-amber-700">{stats.inTransit}</span>
-              <span className="text-[10px] font-bold text-amber-500">في الطريق</span>
-            </div>
-          </>
-        )}
+        <div className="bg-indigo-50 p-6 rounded-[2.5rem] shadow-sm border border-indigo-100 flex flex-col items-center text-center">
+          <span className="text-3xl mb-2">🏭</span>
+          <span className="text-3xl font-black text-indigo-700">{stats.inFactory}</span>
+          <span className="text-[10px] font-bold text-indigo-500">في المطبعة</span>
+        </div>
+        <div className="bg-amber-50 p-6 rounded-[2.5rem] shadow-sm border border-amber-100 flex flex-col items-center text-center">
+          <span className="text-3xl mb-2">🚚</span>
+          <span className="text-3xl font-black text-amber-700">{stats.inTransit}</span>
+          <span className="text-[10px] font-bold text-amber-500">في الطريق</span>
+        </div>
       </section>
 
       {showStatsReport && (
@@ -771,9 +767,34 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500 opacity-20 group-hover:opacity-100 transition-opacity"></div>
                   <div className="flex justify-between items-start">
                     <h4 className="text-xs font-black text-slate-800">{center.displayName}</h4>
-                    <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      {receivedRecords.length} طبلية مستلمة
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        كود: {center.code}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1">
+                    <div className="bg-slate-50 p-2 rounded-xl text-center border border-slate-100">
+                      <span className="text-lg block">📦</span>
+                      <span className="text-xs font-black text-slate-800 block">{centerRecords.length}</span>
+                      <span className="text-[7px] font-bold text-slate-400 uppercase">إجمالي</span>
+                    </div>
+                    <div className="bg-emerald-50 p-2 rounded-xl text-center border border-emerald-100">
+                      <span className="text-lg block">✅</span>
+                      <span className="text-xs font-black text-emerald-700 block">{receivedRecords.length}</span>
+                      <span className="text-[7px] font-bold text-emerald-500 uppercase">مستلم</span>
+                    </div>
+                    <div className="bg-indigo-50 p-2 rounded-xl text-center border border-indigo-100">
+                      <span className="text-lg block">🏭</span>
+                      <span className="text-xs font-black text-indigo-700 block">{centerRecords.filter(r => r.status === 'pending').length}</span>
+                      <span className="text-[7px] font-bold text-indigo-500 uppercase">بالمطبعة</span>
+                    </div>
+                    <div className="bg-amber-50 p-2 rounded-xl text-center border border-amber-100">
+                      <span className="text-lg block">🚚</span>
+                      <span className="text-xs font-black text-amber-700 block">{centerRecords.filter(r => r.status === 'in_transit').length}</span>
+                      <span className="text-[7px] font-bold text-amber-500 uppercase">بالطريق</span>
+                    </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-2">
@@ -904,10 +925,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     </div>
                   )}
 
-                  <div className="pt-2 flex items-center justify-between border-t border-slate-50">
-                    <span className="text-[8px] font-bold text-slate-400">
-                      {centerRecords.filter(r => r.status === 'in_transit').length} طبلية قيد التوريد
-                    </span>
+                  <div className="pt-2 border-t border-slate-50">
                   </div>
                 </div>
               );
