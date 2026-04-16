@@ -6,12 +6,11 @@ import { SubulLogo } from './Dashboard';
 interface Props {
   users: UserCredentials[];
   onLogin: (user: UserCredentials) => void;
-  onLoginWithGoogle: () => void;
 }
 
 type LoginCategory = 'center' | 'factory' | 'monitor' | null;
 
-export const Login: React.FC<Props> = ({ users, onLogin, onLoginWithGoogle }) => {
+export const Login: React.FC<Props> = ({ users, onLogin }) => {
   const [category, setCategory] = useState<LoginCategory>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string>('');
   const [username, setUsername] = useState('');
@@ -43,7 +42,7 @@ export const Login: React.FC<Props> = ({ users, onLogin, onLoginWithGoogle }) =>
           </div>
           <div className="space-y-1">
              <h1 className="text-2xl font-black text-indigo-900">بوابة اللوجستيات</h1>
-             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">منصة سبل لإدارة مخزون الكتب</p>
+             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">منصة إدارة مخزون مشروع التعليم</p>
           </div>
         </div>
 

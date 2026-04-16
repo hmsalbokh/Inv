@@ -32,10 +32,10 @@ interface Props {
   records: InventoryRecord[];
   userCenter: CenterCode | null;
   palletTypes: PalletType[];
-  sheetUrl: string; 
+  onNotify: (title: string, msg: string) => void;
 }
 
-export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, role, currentTripId, records, userCenter, palletTypes, sheetUrl }) => {
+export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, role, currentTripId, records, userCenter, palletTypes, onNotify }) => {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null, text: string }>({ type: null, text: '' });
   const [isCameraScannerActive, setIsCameraScannerActive] = useState(false);
   const [isCameraLoading, setIsCameraLoading] = useState(false);
@@ -203,13 +203,13 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
     const finalIntQty = (isDamaged && hasInternalDamage) ? intDamagedQty : 0;
 
     if (isDamaged) {
-      if (!hasExternalDamage && !hasInternalDamage) { alert('يرجى تحديد نوع التلف'); return; }
-      if (hasExternalDamage && extDamagedQty <= 0) { alert('حدد عدد الكراتين المتضررة خارجياً'); return; }
-      if (hasInternalDamage && intDamagedQty <= 0) { alert('حدد عدد الكراتين المتضررة داخلياً'); return; }
+      if (!hasExternalDamage && !hasInternalDamage) { onNotify('تنبيه', 'يرجى تحديد نوع التلف'); return; }
+      if (hasExternalDamage && extDamagedQty <= 0) { onNotify('تنبيه', 'حدد عدد الكراتين المتضررة خارجياً'); return; }
+      if (hasInternalDamage && intDamagedQty <= 0) { onNotify('تنبيه', 'حدد عدد الكراتين المتضررة داخلياً'); return; }
       
       // التحقق من وجود صور في حالة التلف
       if (finalPhotos.length === 0) {
-        alert('يجب إضافة صورة واحدة على الأقل لإثبات التلف');
+        onNotify('تنبيه', 'يجب إضافة صورة واحدة على الأقل لإثبات التلف');
         return;
       }
       
