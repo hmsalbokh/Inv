@@ -41,8 +41,8 @@ export const Login: React.FC<Props> = ({ users, onLogin }) => {
              <SubulLogo size={70} color="white" />
           </div>
           <div className="space-y-1">
-             <h1 className="text-2xl font-black text-indigo-900">بوابة اللوجستيات</h1>
-             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">منصة إدارة مخزون مشروع التعليم</p>
+             <h1 className="text-2xl font-black text-indigo-900 leading-tight">منصة إدارة مخزون مشروع التعليم</h1>
+             <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest">بوابة اللوجستيات</p>
           </div>
         </div>
 
