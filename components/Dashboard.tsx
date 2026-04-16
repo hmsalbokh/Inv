@@ -674,12 +674,14 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center text-center">
           <span className="text-3xl mb-2">📦</span>
           <span className="text-3xl font-black text-slate-800">{stats.total}</span>
-          <span className="text-[10px] font-bold text-slate-400">إجمالي {role === 'center' ? 'الوارد' : 'الطبليات'}</span>
+          <span className="text-[10px] font-bold text-slate-400">إجمالي الطبليات</span>
         </div>
         <div className="bg-emerald-50 p-6 rounded-[2.5rem] shadow-sm border border-emerald-100 flex flex-col items-center text-center">
           <span className="text-3xl mb-2">✅</span>
           <span className="text-3xl font-black text-emerald-700">{stats.received}</span>
-          <span className="text-[10px] font-bold text-emerald-500">تم استلامها</span>
+          <span className="text-[10px] font-bold text-emerald-500">
+            {role === 'center' ? 'تم استلامها (في المركز)' : 'تم استلامها (في المراكز)'}
+          </span>
         </div>
         <div className="bg-indigo-50 p-6 rounded-[2.5rem] shadow-sm border border-indigo-100 flex flex-col items-center text-center">
           <span className="text-3xl mb-2">🏭</span>
@@ -700,12 +702,12 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                <h2 className="text-lg font-black text-indigo-900">📊 تقرير التلفيات والمخزون</h2>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-indigo-50 p-5 rounded-3xl text-right border border-indigo-100">
-                <span className="text-[9px] font-black text-indigo-400 block mb-1 uppercase">إجمالي الكتب (كراتين)</span>
-                <span className="text-2xl font-black text-indigo-900">{stats.totalCartons.toLocaleString()} كرتون</span>
+              <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100">
+                <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الكتب (كراتين) المستلمة</span>
+                <span className="text-2xl font-black text-emerald-900">{stats.totalCartons.toLocaleString()} كرتون</span>
               </div>
               <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100">
-                <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الحزم</span>
+                <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الحزم المستلمة</span>
                 <span className="text-2xl font-black text-emerald-700">{stats.totalBundles.toLocaleString()} حزمة</span>
               </div>
             </div>
