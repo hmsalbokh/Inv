@@ -10,19 +10,16 @@ interface Props {
   onUpdate: (type: PalletType) => void;
   onAdd: (type: Omit<PalletType, 'id'>) => void;
   onDelete: (id: string) => void;
-  sheetUrl: string;
-  onUrlChange: (url: string) => void;
-  onManualSync: () => void;
   onResetData: () => Promise<void>;
+  onResetStages: () => Promise<void>;
+  onNotify: (title: string, msg: string) => void;
 }
 
-export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, onUpdate, onAdd, onDelete, sheetUrl, onUrlChange, onManualSync, onResetData }) => {
-  const [tab, setTab] = useState<'stages' | 'users' | 'cloud'>('users');
+export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, onUpdate, onAdd, onDelete, onResetData, onResetStages, onNotify }) => {
+  const [tab, setTab] = useState<'stages' | 'users'>('users');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showResetStagesConfirm, setShowResetStagesConfirm] = useState(false);
   const [showDeleteUserConfirm, setShowDeleteUserConfirm] = useState<string | null>(null);
-  const [isUrlLocked, setIsUrlLocked] = useState(true);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [tempUrl, setTempUrl] = useState(sheetUrl);
   
   const [showUserForm, setShowUserForm] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -43,21 +40,6 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
     bundlesPerCarton: 5
   });
 
-  const CORRECT_ADMIN_PASSWORD = 'H0566749388h';
-
-  useEffect(() => { setTempUrl(sheetUrl); }, [sheetUrl]);
-
-  const handleUnlockCloud = () => {
-    if (adminPassword === CORRECT_ADMIN_PASSWORD) { 
-      setIsUrlLocked(false); 
-      setAdminPassword(''); 
-    } else { 
-      alert('كلمة المرور غير صحيحة');
-    }
-  };
-
-  const handleSaveUrl = () => { if (!tempUrl) return; onUrlChange(tempUrl); setIsUrlLocked(true); };
-
   const handleOpenUserForm = (user?: UserCredentials) => {
     if (user) { 
       setEditingUserId(user.id); 
@@ -70,9 +52,17 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
   };
 
   const handleSaveUser = () => {
+    if (!userFormData.username || !userFormData.password || !userFormData.displayName || !userFormData.code) {
+      onNotify('تنبيه', 'يرجى إكمال كافة البيانات');
+      return;
+    }
+    if (!editingUserId && users.some(u => u.username === userFormData.username)) {
+      onNotify('تنبيه', 'اسم المستخدم موجود مسبقاً');
+      return;
+    }
     let newUsers = [...users];
     if (editingUserId) newUsers = newUsers.map(u => u.id === editingUserId ? { ...userFormData, id: editingUserId } : u);
-    else newUsers.push({ ...userFormData, id: crypto.randomUUID() });
+    else newUsers.push({ ...userFormData, id: Date.now().toString() });
     onUpdateUsers(newUsers); 
     setShowUserForm(false);
   };
@@ -89,6 +79,10 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
   };
 
   const handleSaveStage = () => {
+    if (!stageFormData.stageName || !stageFormData.stageCode) {
+      onNotify('تنبيه', 'يرجى إكمال بيانات المرحلة');
+      return;
+    }
     if (editingStage) onUpdate({ ...stageFormData, id: editingStage.id });
     else onAdd(stageFormData);
     setShowStageForm(false);
@@ -96,49 +90,18 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
 
   return (
     <div className="space-y-6 animate-fadeIn pb-10 text-right" dir="rtl">
-      {/* ... (ConfirmModals and Tabs stay same) */}
-      <ConfirmModal isOpen={showResetConfirm} title="تصفير السجلات" message="سيتم حذف كافة السجلات والرحلات بشكل نهائي من الجهاز ومن جوجل شيت. هل أنت متأكد؟" type="danger" onConfirm={async () => { setShowResetConfirm(false); await onResetData(); }} onCancel={() => setShowResetConfirm(false)} />
+      <ConfirmModal isOpen={showResetConfirm} title="تصفير البيانات" message="سيتم حذف رحلات التوزيع وسجلات المخزون فقط بشكل نهائي من السحابة. (المراحل والحسابات ستبقى كما هي). هل أنت متأكد؟" type="danger" onConfirm={async () => { setShowResetConfirm(false); await onResetData(); }} onCancel={() => setShowResetConfirm(false)} />
+      <ConfirmModal isOpen={showResetStagesConfirm} title="إعادة تهيئة المراحل" message="سيتم حذف كافة المراحل الحالية واستبدالها بالمراحل الافتراضية للتعليم العام والعالمي. هل أنت متأكد؟" type="danger" onConfirm={async () => { setShowResetStagesConfirm(false); await onResetStages(); }} onCancel={() => setShowResetStagesConfirm(false)} />
       <ConfirmModal isOpen={!!showDeleteUserConfirm} title="حذف مستخدم" message="هل تريد حذف هذا الحساب؟ لن يتمكن المستخدم من الدخول بعد الآن." type="danger" onConfirm={() => { onUpdateUsers(users.filter(u => u.id !== showDeleteUserConfirm)); setShowDeleteUserConfirm(null); }} onCancel={() => setShowDeleteUserConfirm(null)} />
       
       <div className="flex bg-slate-200/50 p-1.5 rounded-3xl gap-1 sticky top-0 z-10 backdrop-blur-md">
-        <button onClick={() => setTab('cloud')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'cloud' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>☁️ المزامنة</button>
         <button onClick={() => setTab('stages')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'stages' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>📚 المراحل</button>
         <button onClick={() => setTab('users')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'users' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>👤 المستخدمين</button>
       </div>
 
-      {tab === 'cloud' && (
-        <div className="space-y-4 animate-fadeIn">
-          <section className="bg-indigo-900 text-white p-8 rounded-[2.5rem] shadow-xl border-4 border-white/10">
-            <h2 className="text-sm font-black mb-4 flex items-center gap-2">☁️ إعدادات الربط السحابي (Google Sheets)</h2>
-            <div className="space-y-4">
-              {isUrlLocked ? (
-                <div className="space-y-4">
-                   <div className="bg-black/20 p-4 rounded-xl text-[10px] break-all font-mono opacity-60 border border-white/5">{sheetUrl}</div>
-                   <div className="flex gap-2">
-                      <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} className="flex-1 bg-white/10 p-4 rounded-xl text-white outline-none border border-white/10 placeholder:text-white/30" placeholder="كلمة مرور المسئول" />
-                      <button onClick={handleUnlockCloud} className="bg-white text-indigo-900 px-6 rounded-xl font-black text-xs active:scale-95 transition-all">فتح القفل</button>
-                   </div>
-                </div>
-              ) : (
-                <div className="space-y-4 animate-slideDown">
-                   <div className="space-y-1">
-                      <label className="text-[10px] font-black text-indigo-300 block mr-2">رابط Script API الخاص بجوجل شيت</label>
-                      <textarea value={tempUrl} onChange={e => setTempUrl(e.target.value)} className="w-full bg-white p-4 rounded-xl text-indigo-900 text-[10px] font-mono min-h-[100px] outline-none" placeholder="https://script.google.com/..." />
-                   </div>
-                   <div className="flex gap-2">
-                      <button onClick={handleSaveUrl} className="flex-1 bg-emerald-500 text-white p-4 rounded-xl font-black text-xs shadow-lg active:scale-95 transition-all">حفظ التغييرات</button>
-                      <button onClick={() => setIsUrlLocked(true)} className="bg-white/10 px-6 rounded-xl font-black text-xs active:scale-95 transition-all">إلغاء</button>
-                   </div>
-                </div>
-              )}
-            </div>
-          </section>
-          <div className="grid grid-cols-2 gap-3">
-             <button onClick={onManualSync} className="bg-white border-2 border-indigo-600 text-indigo-600 p-5 rounded-2xl font-black text-xs shadow-sm active:scale-95 transition-all">🔄 تحديث البيانات الآن</button>
-             <button onClick={() => setShowResetConfirm(true)} className="bg-rose-50 text-rose-600 p-5 rounded-2xl border border-rose-100 font-black text-xs active:scale-95 transition-all">🗑️ تصفير النظام بالكامل</button>
-          </div>
-        </div>
-      )}
+      <div className="px-4">
+        <button onClick={() => setShowResetConfirm(true)} className="w-full bg-rose-50 text-rose-600 p-4 rounded-2xl border border-rose-100 font-black text-xs active:scale-95 transition-all mb-4">🗑️ تصفير كافة البيانات السحابية</button>
+      </div>
 
       {tab === 'users' && (
         <div className="space-y-4 animate-fadeIn">
@@ -170,7 +133,10 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
         <div className="space-y-4 animate-fadeIn">
           <div className="flex justify-between items-center px-4">
             <h2 className="text-sm font-black text-slate-800">إدارة المراحل والطبليات</h2>
-            <button onClick={() => handleOpenStageForm()} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-black shadow-md">+ مرحلة جديدة</button>
+            <div className="flex gap-2">
+              <button onClick={() => setShowResetStagesConfirm(true)} className="bg-rose-50 text-rose-600 px-4 py-2 rounded-xl text-[10px] font-black border border-rose-100 shadow-sm">🔄 إعادة تهيئة</button>
+              <button onClick={() => handleOpenStageForm()} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-black shadow-md">+ مرحلة جديدة</button>
+            </div>
           </div>
           <div className="grid gap-3">
             {palletTypes.map(t => (

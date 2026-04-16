@@ -67,7 +67,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
          <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: ${isLarge ? '4px' : '2px'} solid black; padding-bottom: ${isLarge ? '10px' : '5px'};">
             <div style="text-align: right;">
                <div style="font-size: ${isLarge ? '12px' : '8px'}; font-weight: 800;">توصيل الكتب</div>
-               <div style="font-size: ${isLarge ? '48px' : '26px'}; font-weight: 900; line-height: 0.9;">سبل</div>
+               <div style="font-size: ${isLarge ? '48px' : '26px'}; font-weight: 900; line-height: 0.9;">مشروع التعليم</div>
             </div>
             <div style="background: black; color: white; padding: ${isLarge ? '8px 12px' : '4px 6px'}; border-radius: 6px; text-align: center;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700;">الرحلة</div>
@@ -136,7 +136,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       container.style.position = 'fixed'; container.style.left = '-9999px';
       container.innerHTML = html;
       document.body.appendChild(container);
-      const opt = { margin: 0, filename: `Subul-${record.palletBarcode}.pdf`, image: { type: 'jpeg', quality: 1 }, html2canvas: { scale: 4, useCORS: true }, jsPDF: { unit: 'mm', format: [w, h], orientation: 'portrait' } };
+      const opt = { margin: 0, filename: `Project-${record.palletBarcode}.pdf`, image: { type: 'jpeg', quality: 1 }, html2canvas: { scale: 4, useCORS: true }, jsPDF: { unit: 'mm', format: [w, h], orientation: 'portrait' } };
       html2pdf().from(container).set(opt).save().then(() => { document.body.removeChild(container); });
     }
     setActiveChoiceId(null);

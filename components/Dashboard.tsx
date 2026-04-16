@@ -49,6 +49,57 @@ const generateUUID = () => {
   });
 };
 
+const StageCard: React.FC<{ type: PalletType, statsRecords: InventoryRecord[] }> = ({ type, statsRecords }) => {
+  const typeRecords = statsRecords.filter(r => r.palletTypeId === type.id);
+  const receivedCount = typeRecords.filter(r => r.status === 'received').length;
+  const inTransitCount = typeRecords.filter(r => r.status === 'in_transit').length;
+  const pendingCount = typeRecords.filter(r => r.status === 'pending').length;
+  
+  const totalCartons = receivedCount * type.cartonsPerPallet;
+  const totalBundles = totalCartons * type.bundlesPerCarton;
+
+  return (
+    <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4 relative overflow-hidden group hover:border-indigo-200 transition-all">
+      <div className={`absolute top-0 left-0 w-2 h-full opacity-20 group-hover:opacity-100 transition-opacity ${type.id.startsWith('ig') ? 'bg-emerald-500' : 'bg-indigo-500'}`}></div>
+      <div className="flex justify-between items-start">
+        <div className="space-y-1">
+          <h4 className="text-sm font-black text-slate-800">{type.stageName}</h4>
+          <p className="text-[10px] font-bold text-slate-400">كود: {type.stageCode}</p>
+        </div>
+        <div className={`${type.id.startsWith('ig') ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'} px-3 py-1 rounded-full text-[10px] font-black`}>
+          {typeRecords.length} طبلية
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+          <span className="text-[8px] font-black text-slate-400 block mb-1 uppercase">الكراتين (المستلمة)</span>
+          <span className="text-lg font-black text-indigo-900">{totalCartons.toLocaleString()}</span>
+        </div>
+        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+          <span className="text-[8px] font-black text-slate-400 block mb-1 uppercase">الحزم (المستلمة)</span>
+          <span className="text-lg font-black text-emerald-700">{totalBundles.toLocaleString()}</span>
+        </div>
+      </div>
+
+      <div className="flex gap-2 pt-3 border-t border-slate-50">
+        <div className="flex-1 text-center">
+          <span className="text-[7px] font-black text-slate-400 block uppercase">مستلم</span>
+          <span className="text-[11px] font-black text-emerald-600">{receivedCount}</span>
+        </div>
+        <div className="flex-1 text-center border-x border-slate-100">
+          <span className="text-[7px] font-black text-slate-400 block uppercase">في الطريق</span>
+          <span className="text-[11px] font-black text-amber-600">{inTransitCount}</span>
+        </div>
+        <div className="flex-1 text-center">
+          <span className="text-[7px] font-black text-slate-400 block uppercase">معلق</span>
+          <span className="text-[11px] font-black text-slate-400">{pendingCount}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distributionTrips, currentTripId, role, userCode, userCenter, users, onSelectCenter, onNewTrip, onNotify }) => {
   const [showForm, setShowForm] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
@@ -79,6 +130,27 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   useEffect(() => {
     if (centerOptions.length > 0 && !cCode) setCCode(centerOptions[0].code);
   }, [centerOptions, cCode]);
+
+  const handleDownloadTemplate = () => {
+    const templateData = [
+      {
+        'رقم الرحلة': '5001',
+        'تاريخ الرحلة': new Date().toISOString().split('T')[0],
+        'نقطة الانطلاق': userCenter || 'RYD',
+        'الوجهة': 'المدينة المستهدفة',
+        ...palletTypes.reduce((acc, type) => {
+          acc[type.stageCode] = 0; // عمود الكراتين
+          acc[`${type.stageCode}L`] = 0; // عمود الحزم
+          return acc;
+        }, {} as Record<string, number>)
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(templateData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, "Distribution_Plan_Template.xlsx");
+  };
 
   const isAdmin = useMemo(() => userCode === 'ADMIN', [userCode]);
 
@@ -121,11 +193,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             originCenter: String(row['نقطة الانطلاق'] || row['originCenter']),
             destinationCity: String(row['الوجهة'] || row['destinationCity']),
             status: 'planned',
-            quantities: palletTypes.map(type => ({
-              palletTypeId: type.id,
-              cartonCount: Number(row[type.stageName] || 0),
-              bundleCount: Number(row[type.stageName] || 0) * type.bundlesPerCarton
-            })).filter(q => q.cartonCount > 0)
+            quantities: palletTypes.map(type => {
+              const cartons = Number(row[type.stageCode] || 0);
+              const extraBundles = Number(row[`${type.stageCode}L`] || 0);
+              const bPerC = type.bundlesPerCarton || 1;
+              
+              // إجمالي الحزم = (الكراتين * السعة) + الحزم الإضافية
+              const totalBundles = (cartons * bPerC) + extraBundles;
+              // عدد الكراتين النهائي (جبر الكسر للأعلى)
+              const finalCartonCount = Math.ceil(totalBundles / bPerC);
+
+              return {
+                palletTypeId: type.id,
+                cartonCount: finalCartonCount,
+                bundleCount: totalBundles
+              };
+            }).filter(q => q.bundleCount > 0)
           };
           batch.set(doc(db, 'distributionTrips', id), trip);
         });
@@ -161,12 +244,23 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const quantities = Object.entries(distTripData.quantities)
       .filter(([_, qty]) => qty.cartons > 0 || qty.bundles > 0)
       .map(([typeId, qty]) => {
+        const type = palletTypes.find(t => t.id === typeId);
+        const bPerC = type?.bundlesPerCarton || 0;
+        
+        if (bPerC <= 0) return null; // تجاهل المراحل ذات البيانات الخاطئة
+
+        // المنطق الجديد: تحويل كل المدخلات إلى حزم أولاً
+        const totalBundles = (qty.cartons * bPerC) + qty.bundles;
+        
+        // ثم إعادة توزيعها إلى كراتين كاملة وحزم متبقية
+        const finalCartonCount = Math.ceil(totalBundles / bPerC);
+        
         return {
           palletTypeId: typeId,
-          cartonCount: qty.cartons,
-          bundleCount: qty.bundles
+          cartonCount: finalCartonCount,
+          bundleCount: totalBundles
         };
-      });
+      }).filter(q => q !== null) as { palletTypeId: string, cartonCount: number, bundleCount: number }[];
 
     if (quantities.length === 0) {
       onNotify('تنبيه', 'يرجى إضافة كمية واحدة على الأقل');
@@ -304,9 +398,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
          <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: ${isLarge ? '4px' : '2px'} solid black; padding-bottom: ${isLarge ? '10px' : '5px'};">
             <div style="text-align: right;">
                <div style="font-size: ${isLarge ? '12px' : '8px'}; font-weight: 800;">توصيل الكتب</div>
-               <div style="font-size: ${isLarge ? '48px' : '26px'}; font-weight: 900; line-height: 0.9;">سبل</div>
+               <div style="font-size: ${isLarge ? '48px' : '26px'}; font-weight: 900; line-height: 0.9;">مشروع التعليم</div>
             </div>
-            <div style="background: black; color: white; padding: ${isLarge ? '8px 12px' : '4px 6px'}; border-radius: 6px; text-align: center;">
+            <div style="background: white; color: black; border: ${isLarge ? '3px' : '2px'} solid black; padding: ${isLarge ? '8px 12px' : '4px 6px'}; border-radius: 6px; text-align: center;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700;">الرحلة</div>
                <div style="font-size: ${isLarge ? '32px' : '18px'}; font-weight: 900;">#${trip?.tripNumber || '---'}</div>
             </div>
@@ -314,7 +408,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
          <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: ${isLarge ? '12px' : '6px'}; padding: 5px 0;">
             <div style="font-size: ${isLarge ? '13px' : '8px'}; font-weight: 900; color: #333;">PALLET BARCODE</div>
             <img src="${barcodeImgUrl}" style="width: 100%; max-height: ${isLarge ? '85px' : '45px'}; object-fit: contain;" />
-            <div style="background: black; color: white; width: 100%; padding: ${isLarge ? '10px' : '5px'}; font-size: ${isLarge ? '26px' : '14px'}; font-weight: 900; font-family: monospace;">
+            <div style="background: white; color: black; border: ${isLarge ? '3px' : '2px'} solid black; width: 100%; padding: ${isLarge ? '10px' : '5px'}; font-size: ${isLarge ? '26px' : '14px'}; font-weight: 900; font-family: monospace; border-radius: 8px;">
                ${record?.palletBarcode}
             </div>
          </div>
@@ -367,8 +461,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const handleNewTripSubmit = () => {
     const selectedEntries = Object.entries(selections) as [string, number][];
     const selectedList = selectedEntries.filter(([_, count]) => count > 0).map(([typeId, count]) => ({ typeId, count }));
-    if (selectedList.length === 0) { alert('يرجى اختيار مرحلة واحدة على الأقل'); return; }
-    if (!cCode) { alert('يرجى اختيار وجهة الاستلام'); return; }
+    if (selectedList.length === 0) { onNotify('تنبيه', 'يرجى اختيار مرحلة واحدة على الأقل'); return; }
+    if (!cCode) { onNotify('تنبيه', 'يرجى اختيار وجهة الاستلام'); return; }
     onNewTrip(pCode, cCode, selectedList, semester, year);
     setShowForm(false); setSelections({});
     setTimeout(() => setShowLabels(true), 500);
@@ -385,7 +479,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             <SubulLogo size={80} color="white" />
          </div>
          <div className="space-y-1 relative z-10">
-            <h2 className="text-2xl font-black text-white leading-tight">سبل للخدمات اللوجستية</h2>
+            <h2 className="text-2xl font-black text-white leading-tight">ادارة مخزون مشروع التعليم</h2>
             <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-[0.3em]">
                {role === 'center' ? `إدارة استلام ${getDisplayName(userCenter || '')}` : 'نظام تتبع الكتب المدرسية'}
             </p>
@@ -398,10 +492,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               <button onClick={() => setShowDistForm(true)} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95">
                 ➕ إضافة رحلة يدوياً
               </button>
-              <label className="px-6 py-2.5 rounded-2xl bg-emerald-500/20 backdrop-blur-md border border-emerald-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-emerald-500/30 transition-all active:scale-95 cursor-pointer">
-                {isUploadingExcel ? 'جاري الرفع...' : '📊 رفع خطة التوزيع'}
-                <input type="file" accept=".xlsx, .xls" onChange={handleExcelUpload} className="hidden" disabled={isUploadingExcel} />
-              </label>
+              <div className="flex gap-1">
+                <label className="px-6 py-2.5 rounded-2xl bg-emerald-500/20 backdrop-blur-md border border-emerald-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-emerald-500/30 transition-all active:scale-95 cursor-pointer">
+                  {isUploadingExcel ? 'جاري الرفع...' : '📊 رفع خطة التوزيع'}
+                  <input type="file" accept=".xlsx, .xls" onChange={handleExcelUpload} className="hidden" disabled={isUploadingExcel} />
+                </label>
+                <button onClick={handleDownloadTemplate} className="px-4 py-2.5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white text-[10px] font-black flex items-center gap-2 hover:bg-white/20 transition-all active:scale-95" title="تحميل القالب">
+                  📥 القالب
+                </button>
+              </div>
             </div>
          )}
       </section>
@@ -460,6 +559,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               </div>
 
               <div className="pt-4 border-t border-slate-100">
+                <div className="bg-indigo-50 p-3 rounded-2xl border border-indigo-100 mb-4">
+                  <p className="text-[9px] font-bold text-indigo-700 leading-relaxed">
+                    💡 <span className="font-black">منطق التوزيع:</span> يتم توزيع الكراتين بشكل كامل أولاً، ثم حساب الحزم المتبقية في كرتون جزئي أخير.
+                  </p>
+                </div>
                 <label className="text-[10px] font-black text-slate-400 block mb-3">الكميات المطلوبة:</label>
                 <div className="space-y-2">
                   {palletTypes.map(type => (
@@ -507,6 +611,36 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                           />
                         </div>
                       </div>
+                      {(() => {
+                        const q = distTripData.quantities[type.id];
+                        if (!q || (q.cartons === 0 && q.bundles === 0)) return null;
+                        
+                        const bPerC = type.bundlesPerCarton || 0;
+                        if (bPerC <= 0) return (
+                          <div className="mt-1 text-[8px] font-bold text-rose-600 bg-rose-50 p-2 rounded-xl border border-rose-100">
+                            ⚠️ خطأ: سعة الكرتون لهذه المرحلة غير محددة بشكل صحيح (0). يرجى مراجعة الإعدادات.
+                          </div>
+                        );
+
+                        const cartons = Number(q.cartons) || 0;
+                        const bundles = Number(q.bundles) || 0;
+                        const totalBundles = (cartons * bPerC) + bundles;
+                        const finalCartons = Math.floor(totalBundles / bPerC);
+                        const finalRemainingBundles = totalBundles % bPerC;
+                        const totalCartonsNeeded = Math.ceil(totalBundles / bPerC);
+                        
+                        return (
+                          <div className="mt-1 text-[8px] font-bold text-indigo-600 bg-indigo-50/50 p-2 rounded-xl border border-indigo-100/50 flex flex-col gap-1">
+                            <div className="flex justify-between">
+                              <span>📦 الإجمالي: {finalCartons} كرتون</span>
+                              <span>🔢 + {finalRemainingBundles} حزمة</span>
+                            </div>
+                            <div className="text-[7px] text-slate-500 border-t border-indigo-100/30 pt-1">
+                              سيتم خصم {totalCartonsNeeded} كرتون من المخزون (منها كرتون واحد جزئي يحتوي على {finalRemainingBundles} حزمة).
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -528,7 +662,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         <section className="animate-slideDown">
           <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border-t-4 border-indigo-500 space-y-4">
             <div className="flex justify-between items-center border-b pb-3">
-               <h3 className="text-sm font-black text-indigo-900">✨ توصيات ذكاء سبل</h3>
+               <h3 className="text-sm font-black text-indigo-900">✨ توصيات الذكاء الاصطناعي</h3>
                <button onClick={() => setAiAnalysis(null)} className="text-[10px] font-bold text-slate-400">إغلاق</button>
             </div>
             <div className="text-xs leading-relaxed text-slate-600 font-bold whitespace-pre-line">{aiAnalysis}</div>
@@ -601,7 +735,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         </section>
       )}
 
-      {isMonitor && (
+      {(isMonitor || isAdmin) && (
         <section className="space-y-4 animate-slideDown">
           <div className="flex items-center justify-between px-2">
             <div className="flex flex-col">
@@ -782,64 +916,51 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         </section>
       )}
 
-      {isMonitor && (
-        <section className="space-y-4 animate-slideDown">
-          <div className="flex items-center justify-between px-2">
-            <h3 className="text-lg font-black text-indigo-900">📦 المخزون حسب المرحلة</h3>
-            <span className="text-[10px] font-bold text-slate-400">إجمالي المراحل: {palletTypes.length}</span>
+      {(role === 'center' || isMonitor || isAdmin) && (
+        <section className="space-y-8 animate-slideDown">
+          {/* قسم التعليم العام */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-4 border-r-4 border-indigo-600">
+              <h3 className="text-lg font-black text-indigo-900">📚 مخزون التعليم العام (G)</h3>
+              <span className="text-[10px] font-bold text-slate-400">
+                {palletTypes.filter(t => t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).length} مرحلة
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {palletTypes.filter(t => t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).map(type => (
+                <StageCard key={type.id} type={type} statsRecords={statsRecords} />
+              ))}
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {palletTypes.map(type => {
-              const typeRecords = statsRecords.filter(r => r.palletTypeId === type.id);
-              const receivedCount = typeRecords.filter(r => r.status === 'received').length;
-              const inTransitCount = typeRecords.filter(r => r.status === 'in_transit').length;
-              const pendingCount = typeRecords.filter(r => r.status === 'pending').length;
-              
-              const totalCartons = receivedCount * type.cartonsPerPallet;
-              const totalBundles = totalCartons * type.bundlesPerCarton;
 
-              return (
-                <div key={type.id} className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4 relative overflow-hidden group hover:border-indigo-200 transition-all">
-                  <div className="absolute top-0 left-0 w-2 h-full bg-indigo-500 opacity-20 group-hover:opacity-100 transition-opacity"></div>
-                  <div className="flex justify-between items-start">
-                    <div className="space-y-1">
-                      <h4 className="text-sm font-black text-slate-800">{type.stageName}</h4>
-                      <p className="text-[10px] font-bold text-slate-400">كود: {type.stageCode}</p>
-                    </div>
-                    <div className="bg-indigo-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-600">
-                      {typeRecords.length} طبلية
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                      <span className="text-[8px] font-black text-slate-400 block mb-1 uppercase">الكراتين (المستلمة)</span>
-                      <span className="text-lg font-black text-indigo-900">{totalCartons.toLocaleString()}</span>
-                    </div>
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                      <span className="text-[8px] font-black text-slate-400 block mb-1 uppercase">الحزم (المستلمة)</span>
-                      <span className="text-lg font-black text-emerald-700">{totalBundles.toLocaleString()}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 pt-3 border-t border-slate-50">
-                    <div className="flex-1 text-center">
-                      <span className="text-[7px] font-black text-slate-400 block uppercase">مستلم</span>
-                      <span className="text-[11px] font-black text-emerald-600">{receivedCount}</span>
-                    </div>
-                    <div className="flex-1 text-center border-x border-slate-100">
-                      <span className="text-[7px] font-black text-slate-400 block uppercase">في الطريق</span>
-                      <span className="text-[11px] font-black text-amber-600">{inTransitCount}</span>
-                    </div>
-                    <div className="flex-1 text-center">
-                      <span className="text-[7px] font-black text-slate-400 block uppercase">معلق</span>
-                      <span className="text-[11px] font-black text-slate-400">{pendingCount}</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          {/* قسم المدارس العالمية */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-4 border-r-4 border-emerald-600">
+              <h3 className="text-lg font-black text-emerald-900">🌍 مخزون المدارس العالمية (IG)</h3>
+              <span className="text-[10px] font-bold text-slate-400">
+                {palletTypes.filter(t => t.stageCode.startsWith('IG')).length} مرحلة
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {palletTypes.filter(t => t.stageCode.startsWith('IG')).map(type => (
+                <StageCard key={type.id} type={type} statsRecords={statsRecords} />
+              ))}
+            </div>
           </div>
+
+          {/* أي مراحل أخرى غير مصنفة */}
+          {palletTypes.filter(t => !t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-4 border-r-4 border-slate-400">
+                <h3 className="text-lg font-black text-slate-700">📦 مراحل أخرى</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {palletTypes.filter(t => !t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).map(type => (
+                  <StageCard key={type.id} type={type} statsRecords={statsRecords} />
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -921,7 +1042,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             </div>
           </div>
 
-          <button onClick={handleNewTripSubmit} className="w-full bg-indigo-900 text-white p-6 rounded-[2rem] font-black text-sm shadow-xl active:scale-95 transition-all">إرسال وتجهيز ملصقات سبل</button>
+          <button onClick={handleNewTripSubmit} className="w-full bg-indigo-900 text-white p-6 rounded-[2rem] font-black text-sm shadow-xl active:scale-95 transition-all">إرسال وتجهيز ملصقات المشروع</button>
         </div>
       )}
 

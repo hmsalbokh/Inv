@@ -22,17 +22,14 @@ import {
   getDocs,
   writeBatch
 } from 'firebase/firestore';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signOut, signInAnonymously } from 'firebase/auth';
 import { getDocFromServer } from 'firebase/firestore';
 
 const STORAGE_KEY_TYPES = 'v13_types';
 const STORAGE_KEY_RECORDS = 'v13_records';
 const STORAGE_KEY_TRIPS = 'v13_trips';
-const STORAGE_KEY_SHEET_URL = 'v13_sheet_url';
 const STORAGE_KEY_USERS = 'v13_users';
 const STORAGE_KEY_LAST_RESET = 'v13_last_reset';
-
-const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzhIpnjpnEPOSYTfxcJtFkVYmGV5jSqowQYM0wdH9kRgeeO2oIGBK2CZu2eRwOyREmB/exec';
 
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -54,18 +51,33 @@ const DEFAULT_USERS: UserCredentials[] = [
 ];
 
 const DEFAULT_TYPES: PalletType[] = [
-  { id: 'p1', stageCode: 'G01', stageName: 'الصف الأول الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
-  { id: 'p2', stageCode: 'G02', stageName: 'الصف الثاني الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
-  { id: 'p3', stageCode: 'G03', stageName: 'الصف الثالث الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
-  { id: 'p4', stageCode: 'G04', stageName: 'الصف الرابع الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
-  { id: 'p5', stageCode: 'G05', stageName: 'الصف الخامس الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
-  { id: 'p6', stageCode: 'G06', stageName: 'الصف السادس الابتدائي', cartonsPerPallet: 24, bundlesPerCarton: 5 },
-  { id: 'm1', stageCode: 'G07', stageName: 'الصف الأول المتوسط', cartonsPerPallet: 20, bundlesPerCarton: 4 },
-  { id: 'm2', stageCode: 'G08', stageName: 'الصف الثاني المتوسط', cartonsPerPallet: 20, bundlesPerCarton: 4 },
-  { id: 'm3', stageCode: 'G09', stageName: 'الصف الثالث المتوسط', cartonsPerPallet: 20, bundlesPerCarton: 4 },
-  { id: 's1', stageCode: 'G11', stageName: 'الصف الأول الثانوي', cartonsPerPallet: 18, bundlesPerCarton: 3 },
-  { id: 's2', stageCode: 'G12', stageName: 'الصف الثاني الثانوي', cartonsPerPallet: 18, bundlesPerCarton: 3 },
-  { id: 's3', stageCode: 'G13', stageName: 'الصف الثالث الثانوي', cartonsPerPallet: 18, bundlesPerCarton: 3 },
+  // التعليم العام
+  { id: 'g01', stageCode: 'G01', stageName: 'الصف الأول الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g02', stageCode: 'G02', stageName: 'الصف الثاني الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g03', stageCode: 'G03', stageName: 'الصف الثالث الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g04', stageCode: 'G04', stageName: 'الصف الرابع الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g05', stageCode: 'G05', stageName: 'الصف الخامس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g06', stageCode: 'G06', stageName: 'الصف السادس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g07', stageCode: 'G07', stageName: 'الصف الأول المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g08', stageCode: 'G08', stageName: 'الصف الثاني المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g09', stageCode: 'G09', stageName: 'الصف الثالث المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g11', stageCode: 'G11', stageName: 'الصف الأول الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g12', stageCode: 'G12', stageName: 'الصف الثاني الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'g13', stageCode: 'G13', stageName: 'الصف الثالث الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  
+  // المدارس العالمية
+  { id: 'ig01', stageCode: 'IG01', stageName: 'المدارس العالمية - الأول الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig02', stageCode: 'IG02', stageName: 'المدارس العالمية - الثاني الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig03', stageCode: 'IG03', stageName: 'المدارس العالمية - الثالث الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig04', stageCode: 'IG04', stageName: 'المدارس العالمية - الرابع الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig05', stageCode: 'IG05', stageName: 'المدارس العالمية - الخامس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig06', stageCode: 'IG06', stageName: 'المدارس العالمية - السادس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig07', stageCode: 'IG07', stageName: 'المدارس العالمية - الأول المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig08', stageCode: 'IG08', stageName: 'المدارس العالمية - الثاني المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig09', stageCode: 'IG09', stageName: 'المدارس العالمية - الثالث المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig11', stageCode: 'IG11', stageName: 'المدارس العالمية - الأول الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig12', stageCode: 'IG12', stageName: 'المدارس العالمية - الثاني الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'ig13', stageCode: 'IG13', stageName: 'المدارس العالمية - الثالث الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
 ];
 
 export const App: React.FC = () => {
@@ -77,9 +89,7 @@ export const App: React.FC = () => {
   const [palletTypes, setPalletTypes] = useState<PalletType[]>(DEFAULT_TYPES);
   const [records, setRecords] = useState<InventoryRecord[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
-  const [sheetUrl, setSheetUrl] = useState<string>(localStorage.getItem(STORAGE_KEY_SHEET_URL) || DEFAULT_SHEET_URL);
   const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
   const [isSystemResetting, setIsSystemResetting] = useState(false);
   const [showNotification, setShowNotification] = useState<{ title: string, msg: string } | null>(null);
@@ -90,8 +100,22 @@ export const App: React.FC = () => {
   // طابع التصفير لفلترة البيانات الشبحية
   const [lastResetTimestamp, setLastResetTimestamp] = useState<number>(Number(localStorage.getItem(STORAGE_KEY_LAST_RESET)) || 0);
 
-  const isSyncingRef = useRef(false);
-  const isPushingRef = useRef(false);
+  // 0. مستمع حالة المصادقة في Firebase
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      if (!user) {
+        signInAnonymously(auth).catch(err => {
+          console.error("Anonymous login failed:", err);
+          setShowNotification({
+            title: 'خطأ في الاتصال السحابي',
+            msg: 'يرجى تفعيل "Anonymous Sign-in" في وحدة تحكم Firebase لتتمكن من إدارة البيانات.'
+          });
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Test Firestore connection
   useEffect(() => {
@@ -107,80 +131,77 @@ export const App: React.FC = () => {
     testConnection();
   }, []);
 
-  // Firebase Auth Listener (Disabled for now as per user request)
+  // تنظيف مخلفات النسخ القديمة لضمان عدم تداخل البيانات المحلية مع بيانات Firebase
   useEffect(() => {
-    // We'll just set auth as ready and use local storage/state for users
-    setIsAuthReady(true);
-    /* 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setFirebaseUser(user);
-      ...
-    });
-    return () => unsubscribe();
-    */
+    localStorage.removeItem(STORAGE_KEY_RECORDS);
+    localStorage.removeItem(STORAGE_KEY_TRIPS);
   }, []);
 
-  // Real-time Listeners
+  // 1. مستمع الإعدادات (طابع التصفير) - يعمل مرة واحدة عند البداية
   useEffect(() => {
-    if (!isAuthReady) return; // Removed firebaseUser check to allow local login with Firestore data
-
-    const unsubTypes = onSnapshot(collection(db, 'palletTypes'), (snapshot) => {
-      const types = snapshot.docs.map(doc => doc.data() as PalletType);
-      if (types.length > 0) setPalletTypes(types);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'palletTypes'));
-
-    const unsubTrips = onSnapshot(query(collection(db, 'trips'), orderBy('startDate', 'desc')), (snapshot) => {
-      const tripsData = snapshot.docs.map(doc => doc.data() as Trip);
-      const filteredTrips = tripsData.filter(t => (t.startDate || 0) > lastResetTimestamp);
-      setTrips(filteredTrips);
-      const active = filteredTrips.find(t => t.status === 'active');
-      if (active) setCurrentTripId(active.id);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'trips'));
-
-    const unsubRecords = onSnapshot(query(collection(db, 'records'), orderBy('timestamp', 'desc')), (snapshot) => {
-      const recordsData = snapshot.docs.map(doc => doc.data() as InventoryRecord);
-      const filteredRecords = recordsData.filter(r => (r.timestamp || 0) > lastResetTimestamp);
-      setRecords(filteredRecords);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'records'));
-
     const unsubConfig = onSnapshot(doc(db, 'config', 'system'), (snapshot) => {
       if (snapshot.exists()) {
         const config = snapshot.data();
-        if (config.lastResetTimestamp > lastResetTimestamp) {
+        if (config.lastResetTimestamp) {
           setLastResetTimestamp(config.lastResetTimestamp);
-          localStorage.setItem(STORAGE_KEY_LAST_RESET, config.lastResetTimestamp.toString());
         }
       }
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'config/system'));
+    });
+    return () => unsubConfig();
+  }, []);
 
+  // 2. مستمعو البيانات - يعتمدون على طابع التصفير لفلترة البيانات الشبحية
+  useEffect(() => {
+    setIsAuthReady(false);
+
+    // مستمع المراحل
+    const unsubTypes = onSnapshot(collection(db, 'palletTypes'), (snapshot) => {
+      const types = snapshot.docs.map(doc => doc.data() as PalletType);
+      setPalletTypes(types);
+    });
+
+    // مستمع الرحلات
+    const unsubTrips = onSnapshot(query(collection(db, 'trips'), orderBy('startDate', 'desc')), (snapshot) => {
+      const tripsData = snapshot.docs
+        .map(doc => doc.data() as Trip)
+        .filter(t => (t.startDate || 0) > lastResetTimestamp);
+      setTrips(tripsData);
+    });
+
+    // مستمع السجلات (الطبليات)
+    const unsubRecords = onSnapshot(query(collection(db, 'records'), orderBy('timestamp', 'desc')), (snapshot) => {
+      const recordsData = snapshot.docs
+        .map(doc => doc.data() as InventoryRecord)
+        .filter(r => (r.timestamp || 0) > lastResetTimestamp);
+      setRecords(recordsData);
+    });
+
+    // مستمع المستخدمين
     const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
       const usersData = snapshot.docs.map(doc => doc.data() as UserCredentials);
       if (usersData.length > 0) setUsers(usersData);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
+    });
 
+    // مستمع رحلات التوزيع
     const unsubDistTrips = onSnapshot(collection(db, 'distributionTrips'), (snapshot) => {
       const distData = snapshot.docs.map(doc => doc.data() as DistributionTrip);
       setDistributionTrips(distData);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'distributionTrips'));
+    });
+
+    const timer = setTimeout(() => {
+      setIsAuthReady(true);
+      setLastSyncTime(new Date().toLocaleTimeString('ar-SA'));
+    }, 1000);
 
     return () => {
+      clearTimeout(timer);
       unsubTypes();
       unsubTrips();
       unsubRecords();
-      unsubConfig();
       unsubUsers();
       unsubDistTrips();
     };
-  }, [isAuthReady, firebaseUser, lastResetTimestamp]);
-
-  const handleLoginWithGoogle = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Login failed:", error);
-    }
-  };
+  }, [lastResetTimestamp]);
 
   const handleLogout = async () => {
     try {
@@ -192,135 +213,11 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleLogin = (user: UserCredentials) => setCurrentUser(user);
-
-  // منطق الدمج الذكي الذي يقارن السجلات بطابع التصفير
-  const mergeRecords = useCallback((local: InventoryRecord[], remote: InventoryRecord[], resetTime: number) => {
-    if (isSystemResetting) return [];
-
-    // 1. تصفية البيانات البعيدة: تجاهل أي سجل أقدم من تاريخ التصفير
-    const filteredRemote = remote.filter(r => (r.timestamp || 0) > resetTime);
-
-    // معالجة الصور في البيانات البعيدة المتبقية
-    const processedRemote = filteredRemote.map(r => {
-      let photos = r.photos;
-      if (typeof (photos as any) === 'string') {
-        try { 
-          const parsed = JSON.parse(photos as unknown as string); 
-          photos = Array.isArray(parsed) ? parsed : [];
-        } catch(e) { 
-          photos = (photos as unknown as string).startsWith('data:image') ? [photos as unknown as string] : []; 
-        }
-      }
-      return { ...r, photos: Array.isArray(photos) ? photos : [] };
-    });
-
-    // 2. تصفية البيانات المحلية أيضاً بنفس المنطق لضمان الاتساق
-    const filteredLocal = local.filter(r => (r.timestamp || 0) > resetTime);
-
-    if (filteredLocal.length === 0) return processedRemote;
-
-    const merged = [...filteredLocal];
-    processedRemote.forEach(rem => {
-      const lIdx = merged.findIndex(l => l.id === rem.id || l.palletBarcode === rem.palletBarcode);
-      if (lIdx === -1) {
-        merged.push(rem);
-      } else {
-        const localRec = merged[lIdx];
-        if ((rem.timestamp || 0) > (localRec.timestamp || 0)) {
-           merged[lIdx] = rem;
-        }
-      }
-    });
-    return merged;
-  }, [isSystemResetting]);
-
-  const fetchFromSheet = useCallback(async (isSilent = false, overrideUrl?: string) => {
-    const urlToUse = overrideUrl || sheetUrl;
-    if (!urlToUse || isSyncingRef.current || isPushingRef.current || isSystemResetting) return;
-    if (!isSilent) setSyncing(true);
-    isSyncingRef.current = true;
-    try {
-      const response = await fetch(`${urlToUse}?action=getAll`, { method: 'GET', mode: 'cors' });
-      if (!response.ok) throw new Error("Connection failed");
-      const data = await response.json();
-      
-      // جلب طابع التصفير من السحاب إذا وجد (يفضل أن يتم تخزينه في السحاب أيضاً)
-      const remoteResetTime = data.lastResetTimestamp || 0;
-      const effectiveResetTime = Math.max(lastResetTimestamp, remoteResetTime);
-      
-      if (effectiveResetTime > lastResetTimestamp) {
-          setLastResetTimestamp(effectiveResetTime);
-          localStorage.setItem(STORAGE_KEY_LAST_RESET, effectiveResetTime.toString());
-      }
-
-      if (data.users && data.users.length > 0) setUsers(data.users);
-      if (data.types && data.types.length > 0) setPalletTypes(data.types);
-      
-      if (data.trips) {
-        // تصفية الرحلات أيضاً بناءً على تاريخ التصفير
-        const filteredTrips = data.trips.filter((t: Trip) => (t.startDate || 0) > effectiveResetTime);
-        setTrips(filteredTrips);
-        const active = filteredTrips.find((t: Trip) => t.status === 'active');
-        if (active) setCurrentTripId(active.id);
-      }
-
-      const remoteRecords = data.records || [];
-      setRecords(prev => mergeRecords(prev, remoteRecords, effectiveResetTime));
-      
-      setLastSyncTime(new Date().toLocaleTimeString('ar-SA'));
-      setSyncError(null);
-    } catch (error: any) {
-      setSyncError('⚠️ خطأ اتصال');
-    } finally {
-      isSyncingRef.current = false;
-      if (!isSilent) setSyncing(false);
-    }
-  }, [sheetUrl, isSystemResetting, mergeRecords, lastResetTimestamp]);
-
-  const pushToSheet = async (newTypes = palletTypes, newRecords = records, newTrips = trips, newUsers = users, resetTime = lastResetTimestamp) => {
-    if (!sheetUrl || isSystemResetting || isPushingRef.current) return;
-    
-    setSyncing(true);
-    isPushingRef.current = true;
-    try {
-      const processedRecords = newRecords.map(r => ({ 
-        ...r, 
-        photos: Array.isArray(r.photos) ? JSON.stringify(r.photos) : (r.photos || "[]") 
-      }));
-      
-      const payload = { 
-        action: 'syncAll', 
-        types: newTypes, 
-        records: processedRecords, 
-        trips: newTrips, 
-        users: newUsers,
-        lastResetTimestamp: resetTime // إرسال طابع التصفير للسحاب
-      };
-
-      const response = await fetch(sheetUrl, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload) 
-      });
-
-      if (!response.ok) throw new Error("Sync failed");
-
-      setLastSyncTime(new Date().toLocaleTimeString('ar-SA'));
-      setSyncError(null);
-    } catch (e: any) {
-      setSyncError('⚠️ فشل مزامنة');
-    } finally { 
-      setTimeout(() => { 
-        isPushingRef.current = false; 
-        setSyncing(false); 
-      }, 500);
-    }
+  const handleLogin = async (user: UserCredentials) => {
+    setCurrentUser(user);
   };
 
   const handleResetAllData = async () => {
-    if (!window.confirm("هل أنت متأكد من تصفير النظام؟ سيتم تجاهل كافة البيانات الحالية نهائياً ولن تقبل إلا البيانات الجديدة المضافة بعد الآن.")) return;
-    
     setIsSystemResetting(true);
     setSyncing(true);
     
@@ -330,16 +227,37 @@ export const App: React.FC = () => {
       // 1. تحديث الطابع محلياً
       setLastResetTimestamp(newResetTime);
       localStorage.setItem(STORAGE_KEY_LAST_RESET, newResetTime.toString());
+      localStorage.removeItem(STORAGE_KEY_RECORDS);
+      localStorage.removeItem(STORAGE_KEY_TRIPS);
+      setRecords([]);
+      setTrips([]);
+      setDistributionTrips([]);
       
       // 2. تحديث الطابع في Firestore
       await setDoc(doc(db, 'config', 'system'), { lastResetTimestamp: newResetTime });
 
-      // 3. مسح البيانات في Firestore (اختياري، أو مجرد الاعتماد على الفلترة)
-      // هنا سنعتمد على الفلترة لضمان السرعة، ولكن يمكن مسح السجلات القديمة لاحقاً
+      // 3. مسح البيانات فعلياً من Firestore على دفعات (Batches)
+      const collectionsToClear = ['records', 'trips', 'distributionTrips'];
+      
+      for (const collName of collectionsToClear) {
+        const snap = await getDocs(collection(db, collName));
+        const docs = snap.docs;
+        
+        // تقسيم العمليات إلى دفعات كل منها 400 عملية (الحد الأقصى هو 500)
+        for (let i = 0; i < docs.length; i += 400) {
+          const batch = writeBatch(db);
+          const chunk = docs.slice(i, i + 400);
+          chunk.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
 
-      setShowNotification({ title: 'تم التصفير الذكي', msg: 'تم تحديث نقطة البداية للنظام بنجاح. أي بيانات قديمة لن تظهر مرة أخرى.' });
+      setShowNotification({ 
+        title: 'تم تصفير البيانات', 
+        msg: 'تم حذف رحلات التوزيع وسجلات المخزون بنجاح. (المراحل والحسابات لم تتأثر)' 
+      });
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, 'config/system');
+      handleFirestoreError(e, OperationType.WRITE, 'reset-all-data');
     } finally {
       setIsSystemResetting(false);
       setSyncing(false);
@@ -426,12 +344,27 @@ export const App: React.FC = () => {
       const batch = writeBatch(db);
       batch.set(doc(db, 'trips', tripId), newTrip);
 
+      // حساب التسلسل التالي لهذه المطبعة
+      const pressRecords = records.filter(r => r.palletBarcode.includes(press));
+      let maxSeq = 0;
+      pressRecords.forEach(r => {
+        const pressIdx = r.palletBarcode.indexOf(press);
+        if (pressIdx !== -1) {
+          const seqPart = r.palletBarcode.substring(pressIdx + press.length, pressIdx + press.length + 5);
+          const seqNum = parseInt(seqPart);
+          if (!isNaN(seqNum) && seqNum > maxSeq) maxSeq = seqNum;
+        }
+      });
+      
+      let currentSeq = maxSeq + 1;
+      const yearDigit = year.slice(-1);
+
       selections.forEach(sel => {
         const pType = palletTypes.find(t => t.id === sel.typeId);
         for (let i = 0; i < sel.count; i++) {
           const recordId = generateUUID();
-          const seq = Math.floor(Math.random() * 10000).toString().padStart(4, '0'); // Simplified sequence
-          const palletBarcode = `${pType?.stageCode}${press}${seq}${semester}${year}`;
+          const seqStr = currentSeq.toString().padStart(5, '0');
+          const palletBarcode = `${pType?.stageCode}${press}${seqStr}${semester}${yearDigit}`;
           
           const record: InventoryRecord = {
             id: recordId,
@@ -445,6 +378,7 @@ export const App: React.FC = () => {
             destination: center
           };
           batch.set(doc(db, 'records', recordId), record);
+          currentSeq++;
         }
       });
 
@@ -454,35 +388,60 @@ export const App: React.FC = () => {
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'trips/records');
     }
-  }, [trips, palletTypes]);
+  }, [trips, palletTypes, records]);
 
   useEffect(() => {
-    fetchFromSheet(true);
-  }, [fetchFromSheet]);
-
-  useEffect(() => {
-    const savedRecords = localStorage.getItem(STORAGE_KEY_RECORDS);
-    if (savedRecords) {
-        const parsed = JSON.parse(savedRecords);
-        // فلترة البيانات المحفوظة محلياً عند التشغيل بناءً على تاريخ التصفير
-        setRecords(parsed.filter((r: InventoryRecord) => (r.timestamp || 0) > lastResetTimestamp));
-    }
-    const savedTrips = localStorage.getItem(STORAGE_KEY_TRIPS);
-    if (savedTrips) {
-      const parsed = JSON.parse(savedTrips);
-      const filteredTrips = parsed.filter((t: Trip) => (t.startDate || 0) > lastResetTimestamp);
-      setTrips(filteredTrips);
-      const active = filteredTrips.find((t: Trip) => t.status === 'active');
-      if (active) setCurrentTripId(active.id);
+    if (lastResetTimestamp > 0) {
+      localStorage.setItem(STORAGE_KEY_LAST_RESET, lastResetTimestamp.toString());
     }
   }, [lastResetTimestamp]);
 
-  useEffect(() => {
-    if (!isSystemResetting) {
-      localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(records));
-      localStorage.setItem(STORAGE_KEY_TRIPS, JSON.stringify(trips));
+  const handleResetStagesToDefault = async () => {
+    try {
+      const batch = writeBatch(db);
+      // Delete existing types from Firestore
+      const snapshot = await getDocs(collection(db, 'palletTypes'));
+      snapshot.docs.forEach(d => {
+        batch.delete(d.ref);
+      });
+      // Add default types
+      DEFAULT_TYPES.forEach(t => {
+        batch.set(doc(db, 'palletTypes', t.id), t);
+      });
+      await batch.commit();
+      setShowNotification({ title: 'نجاح', msg: 'تمت إعادة تهيئة المراحل بنجاح في قاعدة البيانات.' });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
     }
-  }, [records, trips, isSystemResetting]);
+  };
+
+  const isResettingRef = useRef(false);
+
+  // تأثير للهجرة التلقائية للمراحل الجديدة عند دخول الأدمن أو مسئول الإحصاء
+  useEffect(() => {
+    if (isAuthReady && (currentUser?.code === 'ADMIN' || currentUser?.role === 'monitor')) {
+      if (isResettingRef.current) return;
+
+      // قائمة الأكواد المطلوبة حسب توجيهات المستخدم الأخيرة
+      const requiredCodes = [
+        'G01', 'G02', 'G03', 'G04', 'G05', 'G06', 'G07', 'G08', 'G09', 'G11', 'G12', 'G13',
+        'IG01', 'IG02', 'IG03', 'IG04', 'IG05', 'IG06', 'IG07', 'IG08', 'IG09', 'IG11', 'IG12', 'IG13'
+      ];
+      
+      const currentCodes = palletTypes.map(t => t.stageCode);
+      const isMissingRequired = requiredCodes.some(code => !currentCodes.includes(code));
+      const hasOldStages = palletTypes.some(t => t.id.startsWith('p') || t.id.startsWith('m') || t.id.startsWith('s'));
+      
+      // إذا كانت القائمة فارغة، أو تحتوي على بيانات قديمة، أو ينقصها أي من الأكواد الأساسية
+      if (palletTypes.length === 0 || hasOldStages || isMissingRequired) {
+        console.log('Migration triggered: Missing required stages or old data format detected.');
+        isResettingRef.current = true;
+        handleResetStagesToDefault().finally(() => {
+          isResettingRef.current = false;
+        });
+      }
+    }
+  }, [isAuthReady, currentUser, palletTypes]);
 
   if (!isAuthReady) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -490,12 +449,19 @@ export const App: React.FC = () => {
     </div>
   );
 
-  if (!currentUser) return <Login users={users} onLogin={handleLogin} onLoginWithGoogle={handleLoginWithGoogle} />;
+  if (!currentUser) return <Login users={users} onLogin={handleLogin} />;
 
   return (
     <div className="min-h-screen flex flex-col w-full max-w-7xl mx-auto bg-slate-50 shadow-2xl relative lg:border-x lg:border-slate-200">
       <ConfirmModal isOpen={!!showNotification} title={showNotification?.title || ''} message={showNotification?.msg || ''} confirmText="فهمت" onConfirm={() => setShowNotification(null)} onCancel={() => setShowNotification(null)} />
       
+      {isSystemResetting && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-md flex flex-col items-center justify-center text-white space-y-4">
+          <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+          <p className="font-black text-sm">جاري تصفير البيانات... يرجى الانتظار</p>
+        </div>
+      )}
+
       <header className={`p-6 shadow-xl rounded-b-[2.5rem] text-white transition-all duration-500 ${currentUser.role === 'factory' ? 'bg-indigo-900' : currentUser.role === 'center' ? 'bg-emerald-900' : 'bg-slate-900'}`}>
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -504,12 +470,19 @@ export const App: React.FC = () => {
              </div>
              <div className="text-right">
                 <h1 className="text-sm font-black tracking-tight leading-none">{currentUser.displayName}</h1>
-                <button onClick={handleLogout} className="text-[9px] opacity-60 font-bold hover:opacity-100 uppercase tracking-widest mt-1">تسجيل خروج</button>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleLogout} className="text-[9px] opacity-60 font-bold hover:opacity-100 uppercase tracking-widest mt-1">تسجيل خروج</button>
+                  {currentUser.code === 'ADMIN' && (
+                    <span className="text-[8px] bg-white/10 px-2 py-0.5 rounded-full mt-1">
+                      {palletTypes.length} مرحلة
+                    </span>
+                  )}
+                </div>
              </div>
           </div>
           <div className="flex flex-col items-end gap-1">
              <div className={`px-3 py-1 rounded-full text-[8px] font-black transition-all ${syncing ? 'bg-white/30 animate-pulse' : 'bg-white/10'}`}>
-                {syncing ? 'مزامنة...' : syncError || (lastSyncTime ? `تحديث: ${lastSyncTime}` : 'متصل سحابياً ✓')}
+                {syncing ? 'جاري التحديث...' : (lastSyncTime ? `آخر تحديث: ${lastSyncTime}` : 'متصل سحابياً ✓')}
              </div>
           </div>
         </div>
@@ -532,32 +505,53 @@ export const App: React.FC = () => {
             onNotify={(title, msg) => setShowNotification({ title, msg })}
           />
         )}
-        {activeTab === 'scan' && <Scanner onScan={handleScan} role={currentUser.role} currentTruck={currentTruckNumber} onTruckChange={setCurrentTruckNumber} currentTripId={currentTripId} records={records} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} palletTypes={palletTypes} sheetUrl={sheetUrl} />}
+        {activeTab === 'scan' && <Scanner onScan={handleScan} role={currentUser.role} currentTruck={currentTruckNumber} onTruckChange={setCurrentTruckNumber} currentTripId={currentTripId} records={records} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} palletTypes={palletTypes} onNotify={(title, msg) => setShowNotification({ title, msg })} />}
         {activeTab === 'history' && <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} />}
         {activeTab === 'settings' && currentUser.code === 'ADMIN' && (
           <Settings 
             palletTypes={palletTypes} 
             users={users} 
             onUpdateUsers={async (nu) => { 
-              // Update each user in Firestore
-              const batch = writeBatch(db);
-              nu.forEach(u => batch.set(doc(db, 'users', u.id), u));
-              await batch.commit();
+              try {
+                const batch = writeBatch(db);
+                // Find users to delete
+                const currentIds = users.map(u => u.id);
+                const newIds = nu.map(u => u.id);
+                const toDelete = currentIds.filter(id => !newIds.includes(id));
+                
+                toDelete.forEach(id => batch.delete(doc(db, 'users', id)));
+                nu.forEach(u => batch.set(doc(db, 'users', u.id), u));
+                
+                await batch.commit();
+              } catch (e) {
+                handleFirestoreError(e, OperationType.WRITE, 'users');
+              }
             }} 
             onUpdate={async (u) => { 
-              await setDoc(doc(db, 'palletTypes', u.id), u);
+              try {
+                await setDoc(doc(db, 'palletTypes', u.id), u);
+              } catch (e) {
+                handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
+              }
             }} 
             onAdd={async (t) => { 
-              const id = generateUUID();
-              await setDoc(doc(db, 'palletTypes', id), { ...t, id });
+              try {
+                const id = generateUUID();
+                await setDoc(doc(db, 'palletTypes', id), { ...t, id });
+              } catch (e) {
+                handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
+              }
             }} 
             onDelete={async (id) => { 
-              await deleteDoc(doc(db, 'palletTypes', id));
+              try {
+                await deleteDoc(doc(db, 'palletTypes', id));
+              } catch (e) {
+                handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
+              }
             }} 
-            sheetUrl={sheetUrl} 
-            onUrlChange={(newUrl) => { setSheetUrl(newUrl); localStorage.setItem(STORAGE_KEY_SHEET_URL, newUrl); }} 
-            onManualSync={() => {}} 
             onResetData={handleResetAllData} 
+            onResetStages={handleResetStagesToDefault}
+            onNotify={(title, msg) => setShowNotification({ title, msg })}
           />
         )}
       </main>
