@@ -29,8 +29,11 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const getEntityName = (code: string) => users.find(u => u.code === code)?.displayName || code;
   const centerOptions = useMemo(() => users.filter(u => u.role === 'center'), [users]);
 
-  const getConditionLabel = (cond?: PalletCondition) => {
-    switch (cond) {
+  const getConditionLabel = (record: InventoryRecord) => {
+    if (record.hasDiscrepancy) {
+      return { text: record.discrepancyType === 'shortage' ? 'نقص' : 'زيادة', color: 'bg-amber-100 text-amber-700' };
+    }
+    switch (record.condition) {
       case 'intact': return { text: 'سليمة', color: 'bg-emerald-100 text-emerald-700' };
       case 'external_box_damage': return { text: 'تلف كراتين خارجي', color: 'bg-amber-100 text-amber-700' };
       case 'internal_content_damage': return { text: 'تلف كراتين داخلي', color: 'bg-rose-100 text-rose-700' };
@@ -48,7 +51,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       else if (role === 'center' && userCenter) isVisible = record.destination === userCenter;
       
       if (isVisible && role !== 'center' && destinationFilter !== 'ALL') isVisible = record.destination === destinationFilter;
-      if (isVisible && showDamagedOnly) isVisible = record.condition && record.condition !== 'intact';
+      if (isVisible && showDamagedOnly) isVisible = (record.condition && record.condition !== 'intact') || record.hasDiscrepancy;
       
       return isVisible;
     }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
@@ -206,7 +209,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
         ) : (
           filteredRecords.map(record => {
             const isExpanded = expandedId === record.id;
-            const cond = getConditionLabel(record.condition);
+            const cond = getConditionLabel(record);
             const pType = palletTypes.find(t => t.id === record.palletTypeId);
 
             return (
@@ -263,18 +266,39 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                             {record.externalDamageQty ? <div className="bg-white/60 p-2 rounded-xl text-center"><span className="text-[8px] font-black text-slate-500 block">تلف خارجي</span><span className="text-xs font-black text-rose-700">{record.externalDamageQty}</span></div> : null}
                             {record.internalDamageQty ? <div className="bg-white/60 p-2 rounded-xl text-center"><span className="text-[8px] font-black text-slate-500 block">تلف داخلي</span><span className="text-xs font-black text-rose-700">{record.internalDamageQty}</span></div> : null}
                          </div>
-                         {record.photos && record.photos.length > 0 && (
-                           <div className="space-y-2">
-                              <span className="text-[10px] font-black text-rose-900 block text-right">📸 الصور:</span>
-                              <div className="grid grid-cols-3 gap-2">
-                                {record.photos.map((url, i) => (
-                                  <div key={i} onClick={() => setPreviewImageUrl(url)} className="aspect-square bg-white rounded-xl overflow-hidden border border-rose-200 cursor-pointer shadow-sm active:scale-95">
-                                    <img src={url} className="w-full h-full object-cover" alt="evidence" />
-                                  </div>
-                                ))}
+                      </div>
+                    )}
+
+                    {record.hasDiscrepancy && (
+                      <div className="bg-amber-50 border border-amber-100 p-4 rounded-3xl space-y-3">
+                         <span className="text-[11px] font-black text-amber-800 block text-right">⚖️ تقرير التباين (نقص/زيادة)</span>
+                         <div className="grid grid-cols-2 gap-2">
+                            {record.discrepancyCartonsQty ? (
+                               <div className="bg-white/60 p-2 rounded-xl text-center">
+                                  <span className="text-[8px] font-black text-amber-600 block">{record.discrepancyType === 'shortage' ? 'نقص' : 'زيادة'} كراتين</span>
+                                  <span className="text-xs font-black text-amber-700">{record.discrepancyCartonsQty}</span>
+                               </div>
+                            ) : null}
+                            {record.discrepancyBundlesQty ? (
+                               <div className="bg-white/60 p-2 rounded-xl text-center">
+                                  <span className="text-[8px] font-black text-amber-600 block">{record.discrepancyType === 'shortage' ? 'نقص' : 'زيادة'} حزم</span>
+                                  <span className="text-xs font-black text-amber-700">{record.discrepancyBundlesQty}</span>
+                               </div>
+                            ) : null}
+                         </div>
+                      </div>
+                    )}
+
+                    {(record.photos && record.photos.length > 0) && (
+                       <div className="bg-slate-50 border border-slate-100 p-4 rounded-3xl space-y-3">
+                          <span className="text-[10px] font-black text-slate-600 block text-right">📸 صور الإثبات المرفقة:</span>
+                          <div className="grid grid-cols-3 gap-2">
+                            {record.photos.map((url, i) => (
+                              <div key={i} onClick={() => setPreviewImageUrl(url)} className="aspect-square bg-white rounded-xl overflow-hidden border border-slate-200 cursor-pointer shadow-sm active:scale-95">
+                                <img src={url} className="w-full h-full object-cover" alt="evidence" />
                               </div>
-                           </div>
-                         )}
+                            ))}
+                          </div>
                       </div>
                     )}
                   </div>

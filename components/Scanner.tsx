@@ -24,7 +24,7 @@ const generateUUID = () => {
 };
 
 interface Props {
-  onScan: (barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string }) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
+  onScan: (barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string, hasDiscrepancy?: boolean, discrepancyType?: 'shortage' | 'excess', discrepancyCartonsQty?: number, discrepancyBundlesQty?: number }) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
   currentTruck: string;
   onTruckChange: (val: string) => void;
   role: 'factory' | 'center' | 'monitor';
@@ -46,11 +46,16 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
   const [showInspection, setShowInspection] = useState(false);
   const [activeBarcode, setActiveBarcode] = useState('');
   
-  const [isDamaged, setIsDamaged] = useState(false);
+  const [inspectionType, setInspectionType] = useState<'intact' | 'damaged' | 'discrepancy'>('intact');
   const [hasExternalDamage, setHasExternalDamage] = useState(false);
   const [hasInternalDamage, setHasInternalDamage] = useState(false);
   const [extDamagedQty, setExtDamagedQty] = useState<number>(0);
   const [intDamagedQty, setIntDamagedQty] = useState<number>(0);
+
+  const [discrepancyType, setDiscrepancyType] = useState<'shortage' | 'excess'>('shortage');
+  const [discrepancyCartons, setDiscrepancyCartons] = useState<number>(0);
+  const [discrepancyBundles, setDiscrepancyBundles] = useState<number>(0);
+  
   const [userNotes, setUserNotes] = useState('');
   
   const [photoTrack, setPhotoTrack] = useState<PhotoStatus[]>([]);
@@ -138,8 +143,9 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
           return;
         }
         setActiveBarcode(cleanBarcode);
-        setIsDamaged(false); setHasExternalDamage(false); setHasInternalDamage(false);
+        setInspectionType('intact'); setHasExternalDamage(false); setHasInternalDamage(false);
         setExtDamagedQty(0); setIntDamagedQty(0); setUserNotes(''); setPhotoTrack([]);
+        setDiscrepancyType('shortage'); setDiscrepancyCartons(0); setDiscrepancyBundles(0);
         setShowInspection(true);
         return;
       }
@@ -199,15 +205,19 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
     let condition: PalletCondition = 'intact';
     let details = '';
     
-    const finalExtQty = (isDamaged && hasExternalDamage) ? extDamagedQty : 0;
-    const finalIntQty = (isDamaged && hasInternalDamage) ? intDamagedQty : 0;
+    const finalExtQty = (inspectionType === 'damaged' && hasExternalDamage) ? extDamagedQty : 0;
+    const finalIntQty = (inspectionType === 'damaged' && hasInternalDamage) ? intDamagedQty : 0;
 
-    if (isDamaged) {
+    let finalHasDiscrepancy = false;
+    let finalDescType: 'shortage' | 'excess' | undefined = undefined;
+    let finalDescCartons = 0;
+    let finalDescBundles = 0;
+
+    if (inspectionType === 'damaged') {
       if (!hasExternalDamage && !hasInternalDamage) { onNotify('تنبيه', 'يرجى تحديد نوع التلف'); return; }
       if (hasExternalDamage && extDamagedQty <= 0) { onNotify('تنبيه', 'حدد عدد الكراتين المتضررة خارجياً'); return; }
       if (hasInternalDamage && intDamagedQty <= 0) { onNotify('تنبيه', 'حدد عدد الكراتين المتضررة داخلياً'); return; }
       
-      // التحقق من وجود صور في حالة التلف
       if (finalPhotos.length === 0) {
         onNotify('تنبيه', 'يجب إضافة صورة واحدة على الأقل لإثبات التلف');
         return;
@@ -223,6 +233,20 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
         condition = 'internal_content_damage'; 
         details = `تلف كراتين داخلي: (${finalIntQty})`; 
       }
+    } else if (inspectionType === 'discrepancy') {
+      if (discrepancyCartons <= 0 && discrepancyBundles <= 0) { onNotify('تنبيه', 'يرجى تحديد الكمية (كراتين أو حزم) للزيادة أو النقص'); return; }
+      if (finalPhotos.length === 0) { onNotify('تنبيه', 'يجب إضافة صورة إثبات للنقص أو الزيادة'); return; }
+      condition = 'intact';
+      finalHasDiscrepancy = true;
+      finalDescType = discrepancyType;
+      finalDescCartons = discrepancyCartons;
+      finalDescBundles = discrepancyBundles;
+      
+      const label = discrepancyType === 'shortage' ? 'نقص' : 'زيادة';
+      let descParts = [];
+      if (discrepancyCartons > 0) descParts.push(`${discrepancyCartons} كرتون`);
+      if (discrepancyBundles > 0) descParts.push(`${discrepancyBundles} حزمة`);
+      details = `يوجد ${label} في المخزون: ${descParts.join(' و ')}`;
     }
 
     const result = await onScan(activeBarcode, { 
@@ -231,7 +255,11 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
       internalDamageQty: finalIntQty, 
       photos: finalPhotos, 
       notes: userNotes, 
-      damageDetails: details 
+      damageDetails: details,
+      hasDiscrepancy: finalHasDiscrepancy,
+      discrepancyType: finalDescType,
+      discrepancyCartonsQty: finalDescCartons,
+      discrepancyBundlesQty: finalDescBundles
     });
 
     if (result.success) {
@@ -279,15 +307,19 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
                <button onClick={() => setShowInspection(false)} className="bg-slate-100 p-2 rounded-full">✕</button>
             </div>
             <div className="space-y-6 mt-6 pb-6 text-right">
-              <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => setIsDamaged(false)} className={`p-5 rounded-[2rem] border-2 transition-all flex flex-col items-center gap-2 ${!isDamaged ? 'bg-emerald-500 text-white border-transparent shadow-lg scale-105' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
-                  <span className="text-2xl">✅</span><span className="font-black text-xs">سليمة بالكامل</span>
+              <div className="grid grid-cols-3 gap-2">
+                <button onClick={() => setInspectionType('intact')} className={`p-4 rounded-[1.5rem] border-2 transition-all flex flex-col items-center gap-2 ${inspectionType === 'intact' ? 'bg-emerald-500 text-white border-transparent shadow-lg scale-105 z-10' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+                  <span className="text-xl">✅</span><span className="font-black text-[10px]">سليمة</span>
                 </button>
-                <button onClick={() => setIsDamaged(true)} className={`p-5 rounded-[2rem] border-2 transition-all flex flex-col items-center gap-2 ${isDamaged ? 'bg-rose-500 text-white border-transparent shadow-lg scale-105' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
-                  <span className="text-2xl">⚠️</span><span className="font-black text-xs">يوجد تلفيات</span>
+                <button onClick={() => setInspectionType('damaged')} className={`p-4 rounded-[1.5rem] border-2 transition-all flex flex-col items-center gap-2 ${inspectionType === 'damaged' ? 'bg-rose-500 text-white border-transparent shadow-lg scale-105 z-10' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+                  <span className="text-xl">⚠️</span><span className="font-black text-[10px]">تلفيات</span>
+                </button>
+                <button onClick={() => setInspectionType('discrepancy')} className={`p-4 rounded-[1.5rem] border-2 transition-all flex flex-col items-center gap-2 ${inspectionType === 'discrepancy' ? 'bg-amber-500 text-white border-transparent shadow-lg scale-105 z-10' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+                  <span className="text-xl">⚖️</span><span className="font-black text-[10px]">نقص/زيادة</span>
                 </button>
               </div>
-              {isDamaged && (
+
+              {inspectionType === 'damaged' && (
                 <div className="space-y-6 animate-slideDown">
                   <div className={`p-5 rounded-[2rem] border-2 transition-all space-y-4 ${hasExternalDamage ? 'bg-amber-50 border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100 opacity-80'}`}>
                      <div className="flex items-center justify-between">
@@ -320,7 +352,39 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
                        </div>
                      )}
                   </div>
+                </div>
+              )}
 
+              {inspectionType === 'discrepancy' && (
+                <div className="space-y-6 animate-slideDown">
+                  <div className="grid grid-cols-2 gap-3">
+                     <button onClick={() => setDiscrepancyType('shortage')} className={`p-4 rounded-[1.5rem] border-2 transition-all font-black text-xs ${discrepancyType === 'shortage' ? 'bg-amber-500 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>نقص في المخزون</button>
+                     <button onClick={() => setDiscrepancyType('excess')} className={`p-4 rounded-[1.5rem] border-2 transition-all font-black text-xs ${discrepancyType === 'excess' ? 'bg-indigo-500 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>زيادة في المخزون</button>
+                  </div>
+                  
+                  <div className="bg-slate-50 border-2 border-slate-100 p-5 rounded-[2rem] space-y-4">
+                     <div className="flex items-center justify-between bg-white/60 p-3 rounded-2xl border border-slate-100">
+                          <span className="text-xs font-black text-slate-600">الكراتين</span>
+                          <div className="flex items-center gap-4">
+                              <button onClick={() => setDiscrepancyCartons(Math.max(0, discrepancyCartons - 1))} className="w-10 h-10 bg-white border-2 border-slate-200 rounded-xl text-slate-600 font-black text-xl">-</button>
+                              <span className="text-xl font-black text-slate-800 w-10 text-center">{discrepancyCartons}</span>
+                              <button onClick={() => setDiscrepancyCartons(discrepancyCartons + 1)} className="w-10 h-10 bg-white border-2 border-slate-200 rounded-xl text-slate-600 font-black text-xl">+</button>
+                          </div>
+                     </div>
+                     <div className="flex items-center justify-between bg-white/60 p-3 rounded-2xl border border-slate-100">
+                          <span className="text-xs font-black text-slate-600">الحزم</span>
+                          <div className="flex items-center gap-4">
+                              <button onClick={() => setDiscrepancyBundles(Math.max(0, discrepancyBundles - 1))} className="w-10 h-10 bg-white border-2 border-slate-200 rounded-xl text-slate-600 font-black text-xl">-</button>
+                              <span className="text-xl font-black text-slate-800 w-10 text-center">{discrepancyBundles}</span>
+                              <button onClick={() => setDiscrepancyBundles(discrepancyBundles + 1)} className="w-10 h-10 bg-white border-2 border-slate-200 rounded-xl text-slate-600 font-black text-xl">+</button>
+                          </div>
+                     </div>
+                  </div>
+                </div>
+              )}
+
+              {inspectionType !== 'intact' && (
+                <div className="space-y-6 animate-fadeIn pt-4 border-t border-slate-100">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 block mr-2 uppercase">ملاحظات الفاحص</label>
                     <textarea value={userNotes} onChange={e => setUserNotes(e.target.value)} className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-[1.5rem] text-xs font-bold outline-none" placeholder="أي تفاصيل إضافية..." />
@@ -342,6 +406,7 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
                   </div>
                 </div>
               )}
+
             </div>
             <div className="pt-6 border-t border-slate-100 pb-10">
                <button onClick={handleConfirmInspection} disabled={isProcessing} className={`w-full p-6 rounded-[2.5rem] font-black text-sm shadow-2xl transition-all ${isProcessing ? 'bg-slate-200 text-slate-400' : 'bg-indigo-900 text-white active:scale-95 shadow-indigo-500/30'}`}>حفظ وتأكيد الاستلام</button>
