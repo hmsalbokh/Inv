@@ -308,6 +308,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
         let totalCartons = 0;
         let totalBundles = 0;
+        let diffCartons = 0;
+        let diffBundles = 0;
+
         typeInCenter.forEach(r => {
           let c = type.cartonsPerPallet;
           let b = c * type.bundlesPerCarton;
@@ -315,6 +318,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             const sign = r.discrepancyType === 'excess' ? 1 : -1;
             const diffC = r.discrepancyCartonsQty || 0;
             const diffB = r.discrepancyBundlesQty || 0;
+            diffCartons += sign * diffC;
+            diffBundles += sign * diffB;
+            
             c += sign * diffC;
             b += sign * ((diffC * type.bundlesPerCarton) + diffB);
           }
@@ -329,6 +335,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             'المركز': center.displayName,
             'المرحلة': type.stageName,
             'عدد الطبليات (المستلمة)': palletCount,
+            'التباين (كرتون)': diffCartons,
+            'التباين (حزمة)': diffBundles,
             'إجمالي الكراتين': totalCartons,
             'إجمالي الحزم': totalBundles,
             'مخطط صرفه (كرتون)': plannedQty,
@@ -382,6 +390,17 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const totalBundles = stageSummary.reduce((acc, s) => acc + s.totalBundles, 0);
     const totalCartons = stageSummary.reduce((acc, s) => acc + s.totalCartons, 0);
 
+    // حساب إجمالي النقص/الزيادة
+    let totalDiffCartons = 0;
+    let totalDiffBundles = 0;
+    received.forEach(r => {
+      if (r.hasDiscrepancy) {
+        const sign = r.discrepancyType === 'excess' ? 1 : -1;
+        totalDiffCartons += sign * (r.discrepancyCartonsQty || 0);
+        totalDiffBundles += sign * (r.discrepancyBundlesQty || 0);
+      }
+    });
+
     // حساب إجمالي عدد الكراتين المتضررة بدقة
     const totalExtDamagedCartons = received.reduce((acc, r) => acc + (r.externalDamageQty || 0), 0);
     const totalIntDamagedCartons = received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0);
@@ -405,6 +424,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       inTransit: statsRecords.filter(r => r.status === 'in_transit').length,
       totalCartons,
       totalBundles,
+      totalDiffCartons,
+      totalDiffBundles,
       stageSummary,
       totalDamagedCartons,
       totalExtDamagedCartons,
@@ -758,6 +779,25 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   <span className="text-[7px] font-black text-orange-400 block uppercase mt-1">تلف كراتين داخلي</span>
                </div>
             </div>
+
+            {(stats.totalDiffCartons !== 0 || stats.totalDiffBundles !== 0) && (
+              <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-50">
+                 <div className="bg-indigo-50 p-4 rounded-3xl text-center border border-indigo-100 flex flex-col items-center">
+                    <span className="text-xl block mb-1">⚖️</span>
+                    <span className={`text-xl font-black leading-none ${stats.totalDiffCartons > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {stats.totalDiffCartons > 0 ? '+' : ''}{stats.totalDiffCartons}
+                    </span>
+                    <span className="text-[7px] font-black text-indigo-400 block uppercase mt-1">تباين المخزون (كرتون)</span>
+                 </div>
+                 <div className="bg-indigo-50 p-4 rounded-3xl text-center border border-indigo-100 flex flex-col items-center">
+                    <span className="text-xl block mb-1">⚖️</span>
+                    <span className={`text-xl font-black leading-none ${stats.totalDiffBundles > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {stats.totalDiffBundles > 0 ? '+' : ''}{stats.totalDiffBundles}
+                    </span>
+                    <span className="text-[7px] font-black text-indigo-400 block uppercase mt-1">تباين المخزون (حزم)</span>
+                 </div>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -860,6 +900,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                         
                         let typeCartons = 0;
                         let typeBundles = 0;
+                        let stageDiffCartons = 0;
+                        let stageDiffBundles = 0;
+
                         typeInCenter.forEach(r => {
                           let c = type.cartonsPerPallet;
                           let b = c * type.bundlesPerCarton;
@@ -867,6 +910,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                             const sign = r.discrepancyType === 'excess' ? 1 : -1;
                             const diffC = r.discrepancyCartonsQty || 0;
                             const diffB = r.discrepancyBundlesQty || 0;
+                            
+                            stageDiffCartons += (sign * diffC);
+                            stageDiffBundles += (sign * diffB);
+
                             c += sign * diffC;
                             b += sign * ((diffC * type.bundlesPerCarton) + diffB);
                           }
@@ -880,8 +927,24 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
                         return (
                           <div key={type.id} className={`flex flex-col gap-1 p-2 rounded-lg border ${isShortage ? 'bg-rose-50 border-rose-100' : 'bg-slate-50/50 border-slate-100/50'}`}>
-                            <div className="flex justify-between items-center">
-                              <span className="text-[9px] font-bold text-slate-600 truncate max-w-[100px]">{type.stageName}</span>
+                            <div className="flex justify-between items-start">
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-bold text-slate-600 truncate max-w-[100px]">{type.stageName}</span>
+                                {(stageDiffCartons !== 0 || stageDiffBundles !== 0) && (
+                                  <div className="flex gap-1 mt-1">
+                                    {stageDiffCartons !== 0 && (
+                                      <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded-md ${stageDiffCartons > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                        {stageDiffCartons > 0 ? '+' : '-'}{Math.abs(stageDiffCartons)} كرتون
+                                      </span>
+                                    )}
+                                    {stageDiffBundles !== 0 && (
+                                      <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded-md ${stageDiffBundles > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                        {stageDiffBundles > 0 ? '+' : '-'}{Math.abs(stageDiffBundles)} حزمة
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                               <div className="flex items-center gap-2">
                                 <span className="text-[9px] font-black text-indigo-600">{typeCartons} ك</span>
                                 <span className="text-[9px] font-black text-emerald-600">{typeBundles} ح</span>
