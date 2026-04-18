@@ -41,6 +41,10 @@ export interface InventoryRecord {
   photos?: string[];
   notes?: string;
   damageDetails?: string; 
+  hasDiscrepancy?: boolean;
+  discrepancyType?: 'shortage' | 'excess';
+  discrepancyCartonsQty?: number;
+  discrepancyBundlesQty?: number;
   localOnly?: boolean; 
 }
 

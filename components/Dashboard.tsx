@@ -305,8 +305,23 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         const plannedQty = stats.plannedOutbound[center.code]?.[type.id] || 0;
         
         const palletCount = typeInCenter.length;
-        const totalCartons = palletCount * type.cartonsPerPallet;
-        const totalBundles = totalCartons * type.bundlesPerCarton;
+
+        let totalCartons = 0;
+        let totalBundles = 0;
+        typeInCenter.forEach(r => {
+          let c = type.cartonsPerPallet;
+          let b = c * type.bundlesPerCarton;
+          if (r.hasDiscrepancy) {
+            const sign = r.discrepancyType === 'excess' ? 1 : -1;
+            const diffC = r.discrepancyCartonsQty || 0;
+            const diffB = r.discrepancyBundlesQty || 0;
+            c += sign * diffC;
+            b += sign * ((diffC * type.bundlesPerCarton) + diffB);
+          }
+          totalCartons += c;
+          totalBundles += b;
+        });
+
         const remaining = totalCartons - plannedQty;
 
         if (palletCount > 0 || plannedQty > 0) {
@@ -344,8 +359,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const stageSummary = palletTypes.map(type => {
       const typeReceived = received.filter(r => r.palletTypeId === type.id);
       const palletCount = typeReceived.length;
-      const totalCartons = palletCount * type.cartonsPerPallet;
-      const totalBundles = totalCartons * type.bundlesPerCarton;
+
+      let totalCartons = 0;
+      let totalBundles = 0;
+      typeReceived.forEach(r => {
+        let c = type.cartonsPerPallet;
+        let b = c * type.bundlesPerCarton;
+        if (r.hasDiscrepancy) {
+          const sign = r.discrepancyType === 'excess' ? 1 : -1;
+          const diffC = r.discrepancyCartonsQty || 0;
+          const diffB = r.discrepancyBundlesQty || 0;
+          c += sign * diffC;
+          b += sign * ((diffC * type.bundlesPerCarton) + diffB);
+        }
+        totalCartons += c;
+        totalBundles += b;
+      });
       
       return { ...type, palletCount, totalCartons, totalBundles };
     }).filter(s => s.palletCount > 0);
@@ -752,15 +781,24 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               const centerRecords = statsRecords.filter(r => r.destination === center.code);
               const receivedRecords = centerRecords.filter(r => r.status === 'received');
               
-              const centerCartons = receivedRecords.reduce((acc, r) => {
+              let centerCartons = 0;
+              let centerBundles = 0;
+              receivedRecords.forEach(r => {
                 const type = palletTypes.find(t => t.id === r.palletTypeId);
-                return acc + (type?.cartonsPerPallet || 0);
-              }, 0);
-
-              const centerBundles = receivedRecords.reduce((acc, r) => {
-                const type = palletTypes.find(t => t.id === r.palletTypeId);
-                return acc + ((type?.cartonsPerPallet || 0) * (type?.bundlesPerCarton || 0));
-              }, 0);
+                if (type) {
+                  let c = type.cartonsPerPallet;
+                  let b = c * type.bundlesPerCarton;
+                  if (r.hasDiscrepancy) {
+                    const sign = r.discrepancyType === 'excess' ? 1 : -1;
+                    const diffC = r.discrepancyCartonsQty || 0;
+                    const diffB = r.discrepancyBundlesQty || 0;
+                    c += sign * diffC;
+                    b += sign * ((diffC * type.bundlesPerCarton) + diffB);
+                  }
+                  centerCartons += c;
+                  centerBundles += b;
+                }
+              });
 
               const centerPlannedTrips = distributionTrips.filter(t => t.originCenter === center.code && t.status === 'planned');
 
@@ -820,9 +858,24 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                         const plannedQty = stats.plannedOutbound[center.code]?.[type.id] || 0;
                         if (typeInCenter.length === 0 && plannedQty === 0) return null;
                         
-                        const typeCartons = typeInCenter.length * type.cartonsPerPallet;
+                        let typeCartons = 0;
+                        let typeBundles = 0;
+                        typeInCenter.forEach(r => {
+                          let c = type.cartonsPerPallet;
+                          let b = c * type.bundlesPerCarton;
+                          if (r.hasDiscrepancy) {
+                            const sign = r.discrepancyType === 'excess' ? 1 : -1;
+                            const diffC = r.discrepancyCartonsQty || 0;
+                            const diffB = r.discrepancyBundlesQty || 0;
+                            c += sign * diffC;
+                            b += sign * ((diffC * type.bundlesPerCarton) + diffB);
+                          }
+                          typeCartons += c;
+                          typeBundles += b;
+                        });
+
                         const remaining = typeCartons - plannedQty;
-                        const remainingBundles = remaining * type.bundlesPerCarton;
+                        const remainingBundles = remaining * type.bundlesPerCarton; // approximate since we mix carton/bundle shortages, but good enough for UI
                         const isShortage = remaining < 0;
 
                         return (
@@ -831,7 +884,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                               <span className="text-[9px] font-bold text-slate-600 truncate max-w-[100px]">{type.stageName}</span>
                               <div className="flex items-center gap-2">
                                 <span className="text-[9px] font-black text-indigo-600">{typeCartons} ك</span>
-                                <span className="text-[9px] font-black text-emerald-600">{(typeCartons * type.bundlesPerCarton)} ح</span>
+                                <span className="text-[9px] font-black text-emerald-600">{typeBundles} ح</span>
                                 <span className="text-[8px] font-bold text-slate-400 bg-white px-1.5 py-0.5 rounded-md border border-slate-100">{typeInCenter.length} ط</span>
                               </div>
                             </div>
@@ -844,7 +897,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                   </span>
                                   {!isShortage && (
                                     <span className="text-[7px] font-bold text-emerald-500">
-                                      ({remainingBundles} حزمة)
+                                      (~{remainingBundles} حزمة)
                                     </span>
                                   )}
                                 </div>
@@ -863,7 +916,16 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                         {(() => {
                           const currentStock = palletTypes.reduce((acc, type) => {
                             const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
-                            acc[type.id] = typeInCenter.length * type.cartonsPerPallet;
+                            let tC = 0;
+                            typeInCenter.forEach(r => {
+                              let c = type.cartonsPerPallet;
+                              if (r.hasDiscrepancy) {
+                                const sign = r.discrepancyType === 'excess' ? 1 : -1;
+                                c += sign * (r.discrepancyCartonsQty || 0);
+                              }
+                              tC += c;
+                            });
+                            acc[type.id] = tC;
                             return acc;
                           }, {} as Record<string, number>);
 

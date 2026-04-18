@@ -266,7 +266,7 @@ export const App: React.FC = () => {
   };
 
   // ... (باقي الدوال handleScan و handleCreateTrip وال useEffects تبقى كما هي)
-  const handleScan = useCallback(async (barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string }) => {
+  const handleScan = useCallback(async (barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string, hasDiscrepancy?: boolean, discrepancyType?: 'shortage' | 'excess', discrepancyCartonsQty?: number, discrepancyBundlesQty?: number }) => {
     if (isSystemResetting) return { success: false, message: 'النظام في حالة صيانة' };
     const cleanBarcode = barcode.trim().toUpperCase();
     if (!currentUser) return { success: false, message: 'يرجى تسجيل الدخول' };
@@ -312,7 +312,11 @@ export const App: React.FC = () => {
           internalDamageQty: conditionData?.internalDamageQty ?? 0, 
           photos: conditionData?.photos || [], 
           notes: (conditionData?.notes || '') + (extraNotes ? ` ${extraNotes}` : ''), 
-          damageDetails: conditionData?.damageDetails || '' 
+          damageDetails: conditionData?.damageDetails || '',
+          hasDiscrepancy: conditionData?.hasDiscrepancy || false,
+          discrepancyType: conditionData?.discrepancyType,
+          discrepancyCartonsQty: conditionData?.discrepancyCartonsQty ?? 0,
+          discrepancyBundlesQty: conditionData?.discrepancyBundlesQty ?? 0
         };
       } else {
         return { success: false, message: 'غير مصرح لك بمسح هذا الكود' };
