@@ -314,15 +314,21 @@ export const App: React.FC = () => {
           notes: (conditionData?.notes || '') + (extraNotes ? ` ${extraNotes}` : ''), 
           damageDetails: conditionData?.damageDetails || '',
           hasDiscrepancy: conditionData?.hasDiscrepancy || false,
-          discrepancyType: conditionData?.discrepancyType,
           discrepancyCartonsQty: conditionData?.discrepancyCartonsQty ?? 0,
           discrepancyBundlesQty: conditionData?.discrepancyBundlesQty ?? 0
         };
+
+        if (conditionData?.discrepancyType) {
+          updates.discrepancyType = conditionData.discrepancyType;
+        }
       } else {
         return { success: false, message: 'غير مصرح لك بمسح هذا الكود' };
       }
 
-      await setDoc(doc(db, 'records', record.id), { ...record, ...updates }, { merge: true });
+      const mergedData = { ...record, ...updates };
+      const cleanedData = Object.fromEntries(Object.entries(mergedData).filter(([_, v]) => v !== undefined));
+      
+      await setDoc(doc(db, 'records', record.id), cleanedData, { merge: true });
       return { success: true, message: successMessage };
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'records');
@@ -330,7 +336,7 @@ export const App: React.FC = () => {
     }
   }, [currentUser, currentTripId, currentTruckNumber, records, isSystemResetting]);
 
-  const handleCreateTrip = useCallback(async (press: PressCode, center: CenterCode, selections: { typeId: string, count: number }[], semester: string, year: string) => {
+  const handleCreateTrip = useCallback(async (press: PressCode, center: CenterCode, selections: { typeId: string, pallets: number, extraCartons: number, missingCartons: number }[], semester: string, year: string) => {
     const tripId = generateUUID();
     const tripNumber = (trips.length + 1).toString().padStart(4, '0');
     
@@ -365,7 +371,9 @@ export const App: React.FC = () => {
 
       selections.forEach(sel => {
         const pType = palletTypes.find(t => t.id === sel.typeId);
-        for (let i = 0; i < sel.count; i++) {
+        
+        // Handle standalone extra cartons (no full pallets)
+        if (sel.pallets === 0 && sel.extraCartons > 0) {
           const recordId = generateUUID();
           const seqStr = currentSeq.toString().padStart(5, '0');
           const palletBarcode = `${pType?.stageCode}${press}${seqStr}${semester}${yearDigit}`;
@@ -379,10 +387,39 @@ export const App: React.FC = () => {
             status: 'pending',
             timestamp: Date.now(),
             scannedBy: 'factory',
-            destination: center
+            destination: center,
+            extraCartons: sel.extraCartons,
+            missingCartons: 0,
+            isExtraOnly: true
           };
           batch.set(doc(db, 'records', recordId), record);
           currentSeq++;
+        } else {
+          // Handle full pallets (and attach extra and missing cartons to appropriate pallets)
+          for (let i = 0; i < sel.pallets; i++) {
+            const recordId = generateUUID();
+            const seqStr = currentSeq.toString().padStart(5, '0');
+            const palletBarcode = `${pType?.stageCode}${press}${seqStr}${semester}${yearDigit}`;
+            
+            const record: InventoryRecord = {
+              id: recordId,
+              palletTypeId: sel.typeId,
+              palletBarcode,
+              tripId: tripId,
+              truckId: '1',
+              status: 'pending',
+              timestamp: Date.now(),
+              scannedBy: 'factory',
+              destination: center,
+              // Attach extra cartons to the first pallet
+              extraCartons: i === 0 ? sel.extraCartons : 0,
+              // Attach missing cartons to the last pallet
+              missingCartons: i === (sel.pallets - 1) ? sel.missingCartons : 0,
+              isExtraOnly: false
+            };
+            batch.set(doc(db, 'records', recordId), record);
+            currentSeq++;
+          }
         }
       });
 
@@ -505,6 +542,7 @@ export const App: React.FC = () => {
             userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} 
             users={users} 
             onSelectCenter={() => {}} 
+            // @ts-ignore
             onNewTrip={handleCreateTrip} 
             onNotify={(title, msg) => setShowNotification({ title, msg })}
           />
