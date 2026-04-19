@@ -137,11 +137,12 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
       const cleanBarcode = barcode.trim().toUpperCase();
       if (role === 'center') {
         const record = records.find(r => r.palletBarcode === cleanBarcode);
-        if (!record || record.destination !== userCenter || record.status === 'received') {
-          setStatus({ type: 'error', text: 'الباركود غير صالح أو مستلم مسبقاً.' });
+        if (!record || record.status === 'received') {
+          setStatus({ type: 'error', text: 'الباركود غير موجود أو مستلم مسبقاً.' });
           setTimeout(() => setStatus({ type: null, text: '' }), 3000);
           return;
         }
+        // لا نمنع الاستلام إذا كانت الوجهة مختلفة، بل نسمح له بالاستمرار (سيتم إظهار تنبيه لاحقاً)
         setActiveBarcode(cleanBarcode);
         setInspectionType('intact'); setHasExternalDamage(false); setHasInternalDamage(false);
         setExtDamagedQty(0); setIntDamagedQty(0); setUserNotes(''); setPhotoTrack([]);
