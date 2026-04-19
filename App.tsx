@@ -278,8 +278,12 @@ export const App: React.FC = () => {
       let updates: Partial<InventoryRecord> = {};
       let successMessage = 'تم التحديث بنجاح';
 
-      if (currentUser.role === 'factory' && record.tripId === currentTripId) {
-        if (record.status !== 'pending') return { success: false, message: 'هذه الطبلية تم مسحها مسبقاً في المطبعة' };
+      if (currentUser.role === 'factory') {
+        if (record.tripId !== currentTripId) {
+           const tripInfo = trips.find(t => t.id === record.tripId);
+           return { success: false, message: `تنبيه: هذا الكود تم إنشاؤه لرحلة أخرى (${tripInfo?.tripNumber || 'غير معروفة'})، يرجى تفعيل الرحلة الصحيحة أولاً.` };
+        }
+        if (record.status !== 'pending') return { success: false, message: 'هذه الطبلية تم مسحها مسبقاً بالتصدير' };
         updates = { status: 'in_transit', timestamp: Date.now(), factoryTimestamp: Date.now(), truckId: currentTruckNumber };
       } else if (currentUser.role === 'center') {
         if (record.status === 'received') return { success: false, message: 'هذه الطبلية مستلمة مسبقاً' };
