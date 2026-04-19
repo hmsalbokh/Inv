@@ -107,7 +107,16 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
         try {
           const scanner = new Html5Qrcode("reader");
           scannerInstanceRef.current = scanner;
-          const config = { fps: 30, qrbox: (vw: number, vh: number) => ({ width: Math.min(vw, vh) * 0.7, height: Math.min(vw, vh) * 0.7 }), aspectRatio: 1.0, formatsToSupport: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] };
+          const config = { 
+            fps: 30, 
+            qrbox: (vw: number, vh: number) => {
+               const width = Math.min(vw * 0.85, 400);
+               return { width, height: 250 }; // المستطيل أسهل لقراءة الباركود الطولي (1D)
+            }, 
+            aspectRatio: 1.0, 
+            experimentalFeatures: { useBarCodeDetectorIfSupported: true } 
+          };
+          
           await scanner.start({ facingMode: "environment" }, config, (text: string) => {
             if (mounted && !isProcessingScan.current) {
               isProcessingScan.current = true;
