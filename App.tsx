@@ -279,12 +279,16 @@ export const App: React.FC = () => {
       let successMessage = 'تم التحديث بنجاح';
 
       if (currentUser.role === 'factory') {
+        if (record.status !== 'pending') return { success: false, message: 'هذه الطبلية تم مسحها مسبقاً بالتصدير' };
+        
+        updates = { status: 'in_transit', timestamp: Date.now(), factoryTimestamp: Date.now(), truckId: currentTruckNumber };
+
         if (record.tripId !== currentTripId) {
            const tripInfo = trips.find(t => t.id === record.tripId);
-           return { success: false, message: `تنبيه: هذا الكود تم إنشاؤه لرحلة أخرى (${tripInfo?.tripNumber || 'غير معروفة'})، يرجى تفعيل الرحلة الصحيحة أولاً.` };
+           successMessage = `تم التصدير بنجاح (تنبيه: هذا الكود يعود لرحلة أخرى: ${tripInfo?.tripNumber || 'غير معروف'})`;
+        } else {
+           successMessage = 'تم التصدير بنجاح';
         }
-        if (record.status !== 'pending') return { success: false, message: 'هذه الطبلية تم مسحها مسبقاً بالتصدير' };
-        updates = { status: 'in_transit', timestamp: Date.now(), factoryTimestamp: Date.now(), truckId: currentTruckNumber };
       } else if (currentUser.role === 'center') {
         if (record.status === 'received') return { success: false, message: 'هذه الطبلية مستلمة مسبقاً' };
         
