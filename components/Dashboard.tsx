@@ -51,12 +51,37 @@ const generateUUID = () => {
 
 const StageCard: React.FC<{ type: PalletType, statsRecords: InventoryRecord[] }> = ({ type, statsRecords }) => {
   const typeRecords = statsRecords.filter(r => r.palletTypeId === type.id);
-  const receivedCount = typeRecords.filter(r => r.status === 'received').length;
+  const receivedRecords = typeRecords.filter(r => r.status === 'received');
+  const receivedCount = receivedRecords.length;
   const inTransitCount = typeRecords.filter(r => r.status === 'in_transit').length;
   const pendingCount = typeRecords.filter(r => r.status === 'pending').length;
   
-  const totalCartons = receivedCount * type.cartonsPerPallet;
-  const totalBundles = totalCartons * type.bundlesPerCarton;
+  let totalCartons = 0;
+  let totalBundles = 0;
+
+  receivedRecords.forEach(r => {
+    let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
+    let b = c * type.bundlesPerCarton;
+
+    if (r.extraCartons) {
+      c += r.extraCartons;
+      b += r.extraCartons * type.bundlesPerCarton;
+    }
+    if (r.missingCartons) {
+      c -= r.missingCartons;
+      b -= r.missingCartons * type.bundlesPerCarton;
+    }
+
+    if (r.hasDiscrepancy) {
+      const sign = r.discrepancyType === 'excess' ? 1 : -1;
+      const diffC = r.discrepancyCartonsQty || 0;
+      const diffB = r.discrepancyBundlesQty || 0;
+      c += sign * diffC;
+      b += sign * ((diffC * type.bundlesPerCarton) + diffB);
+    }
+    totalCartons += c;
+    totalBundles += b;
+  });
 
   return (
     <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4 relative overflow-hidden group hover:border-indigo-200 transition-all">
@@ -107,7 +132,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [cCode, setCCode] = useState<CenterCode>('');
   const [semester, setSemester] = useState('1'); 
   const [year, setYear] = useState('2026'); 
-  const [selections, setSelections] = useState<Record<string, number>>({});
+  const [selections, setSelections] = useState<Record<string, { pallets: number, extraCartons: number, missingCartons: number }>>({});
   
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
   const [isBatchPrinting, setIsBatchPrinting] = useState(false);
@@ -312,8 +337,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         let diffBundles = 0;
 
         typeInCenter.forEach(r => {
-          let c = type.cartonsPerPallet;
+          let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
           let b = c * type.bundlesPerCarton;
+
+          if (r.extraCartons) {
+            c += r.extraCartons;
+            b += r.extraCartons * type.bundlesPerCarton;
+            diffCartons += r.extraCartons;
+            diffBundles += r.extraCartons * type.bundlesPerCarton;
+          }
+          if (r.missingCartons) {
+            c -= r.missingCartons;
+            b -= r.missingCartons * type.bundlesPerCarton;
+            diffCartons -= r.missingCartons;
+            diffBundles -= r.missingCartons * type.bundlesPerCarton;
+          }
+
           if (r.hasDiscrepancy) {
             const sign = r.discrepancyType === 'excess' ? 1 : -1;
             const diffC = r.discrepancyCartonsQty || 0;
@@ -371,8 +410,18 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       let totalCartons = 0;
       let totalBundles = 0;
       typeReceived.forEach(r => {
-        let c = type.cartonsPerPallet;
+        let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
         let b = c * type.bundlesPerCarton;
+
+        if (r.extraCartons) {
+          c += r.extraCartons;
+          b += r.extraCartons * type.bundlesPerCarton;
+        }
+        if (r.missingCartons) {
+          c -= r.missingCartons;
+          b -= r.missingCartons * type.bundlesPerCarton;
+        }
+
         if (r.hasDiscrepancy) {
           const sign = r.discrepancyType === 'excess' ? 1 : -1;
           const diffC = r.discrepancyCartonsQty || 0;
@@ -394,10 +443,21 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     let totalDiffCartons = 0;
     let totalDiffBundles = 0;
     received.forEach(r => {
-      if (r.hasDiscrepancy) {
-        const sign = r.discrepancyType === 'excess' ? 1 : -1;
-        totalDiffCartons += sign * (r.discrepancyCartonsQty || 0);
-        totalDiffBundles += sign * (r.discrepancyBundlesQty || 0);
+      const type = palletTypes.find(t => t.id === r.palletTypeId);
+      if (type) {
+        if (r.extraCartons) {
+          totalDiffCartons += r.extraCartons;
+          totalDiffBundles += r.extraCartons * type.bundlesPerCarton;
+        }
+        if (r.missingCartons) {
+          totalDiffCartons -= r.missingCartons;
+          totalDiffBundles -= r.missingCartons * type.bundlesPerCarton;
+        }
+        if (r.hasDiscrepancy) {
+          const sign = r.discrepancyType === 'excess' ? 1 : -1;
+          totalDiffCartons += sign * (r.discrepancyCartonsQty || 0);
+          totalDiffBundles += sign * (r.discrepancyBundlesQty || 0);
+        }
       }
     });
 
@@ -464,6 +524,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
          </div>
          <div style="padding: ${isLarge ? '8px 0' : '4px 0'}; border-top: ${isLarge ? '3px' : '1.5px'} solid black; border-bottom: ${isLarge ? '3px' : '1.5px'} solid black; margin-bottom: 5px;">
             <div style="font-size: ${isLarge ? '24px' : '12px'}; font-weight: 900; line-height: 1.1;">${pType?.stageName}</div>
+            <div style="font-size: ${isLarge ? '12px' : '8px'}; font-weight: 700; color: #555;">
+              ${record.isExtraOnly ? `(تحتوي على ${record.extraCartons} كرتون إضافي فقط بدون طبلية كاملة)` : `طبلية كاملة${record.extraCartons ? ` + (${record.extraCartons} كراتين إضافية)` : ''}`}
+            </div>
+            ${record.missingCartons ? `<div style="font-size: ${isLarge ? '13px' : '9px'}; font-weight: 900; color: #e11d48; margin-top: 2px;">(⚠️ طبلية ناقصة: مخصوم منها ${record.missingCartons} كراتين)</div>` : ''}
          </div>
          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
             <div style="text-align: right; border-left: ${isLarge ? '2px' : '1px'} solid black; padding-left: 5px;">
@@ -509,10 +573,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   };
 
   const handleNewTripSubmit = () => {
-    const selectedEntries = Object.entries(selections) as [string, number][];
-    const selectedList = selectedEntries.filter(([_, count]) => count > 0).map(([typeId, count]) => ({ typeId, count }));
-    if (selectedList.length === 0) { onNotify('تنبيه', 'يرجى اختيار مرحلة واحدة على الأقل'); return; }
+    const selectedEntries = Object.entries(selections);
+    const selectedList = selectedEntries
+      .filter(([_, sel]) => (sel.pallets || 0) > 0 || (sel.extraCartons || 0) > 0 || (sel.missingCartons || 0) > 0)
+      .map(([typeId, sel]) => ({ typeId, pallets: sel.pallets || 0, extraCartons: sel.extraCartons || 0, missingCartons: sel.missingCartons || 0 }));
+      
+    if (selectedList.length === 0) { onNotify('تنبيه', 'يرجى اختيار كمية أو طبلية واحدة على الأقل'); return; }
     if (!cCode) { onNotify('تنبيه', 'يرجى اختيار وجهة الاستلام'); return; }
+    
+    // @ts-ignore
     onNewTrip(pCode, cCode, selectedList, semester, year);
     setShowForm(false); setSelections({});
     setTimeout(() => setShowLabels(true), 500);
@@ -826,8 +895,18 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               receivedRecords.forEach(r => {
                 const type = palletTypes.find(t => t.id === r.palletTypeId);
                 if (type) {
-                  let c = type.cartonsPerPallet;
+                  let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
                   let b = c * type.bundlesPerCarton;
+
+                  if (r.extraCartons) {
+                    c += r.extraCartons;
+                    b += r.extraCartons * type.bundlesPerCarton;
+                  }
+                  if (r.missingCartons) {
+                    c -= r.missingCartons;
+                    b -= r.missingCartons * type.bundlesPerCarton;
+                  }
+
                   if (r.hasDiscrepancy) {
                     const sign = r.discrepancyType === 'excess' ? 1 : -1;
                     const diffC = r.discrepancyCartonsQty || 0;
@@ -904,8 +983,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                         let stageDiffBundles = 0;
 
                         typeInCenter.forEach(r => {
-                          let c = type.cartonsPerPallet;
+                          let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
                           let b = c * type.bundlesPerCarton;
+
+                          if (r.extraCartons) {
+                            c += r.extraCartons;
+                            b += r.extraCartons * type.bundlesPerCarton;
+                            stageDiffCartons += r.extraCartons;
+                            stageDiffBundles += r.extraCartons * type.bundlesPerCarton;
+                          }
+                          if (r.missingCartons) {
+                            c -= r.missingCartons;
+                            b -= r.missingCartons * type.bundlesPerCarton;
+                            stageDiffCartons -= r.missingCartons;
+                            stageDiffBundles -= r.missingCartons * type.bundlesPerCarton;
+                          }
+
                           if (r.hasDiscrepancy) {
                             const sign = r.discrepancyType === 'excess' ? 1 : -1;
                             const diffC = r.discrepancyCartonsQty || 0;
@@ -981,7 +1074,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                             const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
                             let tC = 0;
                             typeInCenter.forEach(r => {
-                              let c = type.cartonsPerPallet;
+                              let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
+
+                              if (r.extraCartons) {
+                                c += r.extraCartons;
+                              }
+                              if (r.missingCartons) {
+                                c -= r.missingCartons;
+                              }
+
                               if (r.hasDiscrepancy) {
                                 const sign = r.discrepancyType === 'excess' ? 1 : -1;
                                 c += sign * (r.discrepancyCartonsQty || 0);
@@ -1159,28 +1260,83 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
           <div className="space-y-3">
             <label className="text-[10px] font-black text-slate-400 mr-2">تحديد المراحل والكميات</label>
-            <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-100">
+            <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-100 custom-scrollbar">
               {palletTypes.map(type => (
-                <div key={type.id} className="flex items-center justify-between p-3 bg-white rounded-xl shadow-sm border border-slate-100">
-                  <span className="text-[11px] font-black text-slate-700">{type.stageName}</span>
-                  <div className="flex items-center gap-2">
-                    <button 
-                      type="button"
-                      onClick={() => setSelections(prev => ({ ...prev, [type.id]: Math.max(0, (prev[type.id] || 0) - 1) }))}
-                      className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-lg text-slate-600 font-black"
-                    >-</button>
-                    <input 
-                      type="number" 
-                      min="0"
-                      value={selections[type.id] || 0}
-                      onChange={e => setSelections(prev => ({ ...prev, [type.id]: parseInt(e.target.value) || 0 }))}
-                      className="w-12 text-center bg-transparent font-black text-xs outline-none"
-                    />
-                    <button 
-                      type="button"
-                      onClick={() => setSelections(prev => ({ ...prev, [type.id]: (prev[type.id] || 0) + 1 }))}
-                      className="w-8 h-8 flex items-center justify-center bg-indigo-100 rounded-lg text-indigo-600 font-black"
-                    >+</button>
+                <div key={type.id} className="flex flex-col gap-2 p-3 bg-white rounded-xl shadow-sm border border-slate-100">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-50">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] font-black text-slate-700">{type.stageName}</span>
+                      <span className="text-[8px] font-bold text-slate-400">الطبلية: {type.cartonsPerPallet} كرتون</span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <div className="flex flex-col items-center flex-1 gap-1">
+                      <span className="text-[9px] font-black text-indigo-900 border-b border-indigo-100 pb-1 w-full text-center">عدد الطبليات</span>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], pallets: Math.max(0, ((prev[type.id]?.pallets) || 0) - 1) } }))}
+                          className="w-6 h-6 flex items-center justify-center bg-slate-100 rounded-lg text-slate-600 font-black"
+                        >-</button>
+                        <input 
+                          type="number" 
+                          min="0"
+                          value={selections[type.id]?.pallets || 0}
+                          onChange={e => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], pallets: parseInt(e.target.value) || 0 } }))}
+                          className="w-10 text-center bg-slate-50 border border-slate-100 rounded-lg font-black text-xs outline-none py-1.5"
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], pallets: ((prev[type.id]?.pallets) || 0) + 1 } }))}
+                          className="w-6 h-6 flex items-center justify-center bg-indigo-100 rounded-lg text-indigo-600 font-black"
+                        >+</button>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-center flex-1 gap-1">
+                      <span className="text-[9px] font-black text-emerald-700 border-b border-emerald-100 pb-1 w-full text-center flex items-center justify-center gap-1">كراتين إضافية <span className="text-[7px] text-emerald-500">(بجانب الطبلية)</span></span>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], extraCartons: Math.max(0, ((prev[type.id]?.extraCartons) || 0) - 1) } }))}
+                          className="w-6 h-6 flex items-center justify-center bg-slate-100 rounded-lg text-slate-600 font-black"
+                        >-</button>
+                        <input 
+                          type="number" 
+                          min="0"
+                          value={selections[type.id]?.extraCartons || 0}
+                          onChange={e => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], extraCartons: parseInt(e.target.value) || 0 } }))}
+                          className="w-10 text-center bg-slate-50 border border-slate-100 rounded-lg font-black text-xs outline-none py-1.5 text-emerald-700"
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], extraCartons: ((prev[type.id]?.extraCartons) || 0) + 1 } }))}
+                          className="w-6 h-6 flex items-center justify-center bg-emerald-100 rounded-lg text-emerald-700 font-black"
+                        >+</button>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col items-center flex-1 gap-1">
+                      <span className="text-[9px] font-black text-rose-700 border-b border-rose-100 pb-1 w-full text-center flex items-center justify-center gap-1">كراتين ناقصة <span className="text-[7px] text-rose-500">(من الطبلية)</span></span>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], missingCartons: Math.max(0, ((prev[type.id]?.missingCartons) || 0) - 1) } }))}
+                          className="w-6 h-6 flex items-center justify-center bg-slate-100 rounded-lg text-slate-600 font-black"
+                        >-</button>
+                        <input 
+                          type="number" 
+                          min="0"
+                          value={selections[type.id]?.missingCartons || 0}
+                          onChange={e => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], missingCartons: parseInt(e.target.value) || 0 } }))}
+                          className="w-10 text-center bg-slate-50 border border-slate-100 rounded-lg font-black text-xs outline-none py-1.5 text-rose-700"
+                        />
+                        <button 
+                          type="button"
+                          onClick={() => setSelections(prev => ({ ...prev, [type.id]: { ...prev[type.id], missingCartons: ((prev[type.id]?.missingCartons) || 0) + 1 } }))}
+                          className="w-6 h-6 flex items-center justify-center bg-rose-100 rounded-lg text-rose-700 font-black"
+                        >+</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}

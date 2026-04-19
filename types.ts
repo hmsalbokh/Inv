@@ -45,6 +45,9 @@ export interface InventoryRecord {
   discrepancyType?: 'shortage' | 'excess';
   discrepancyCartonsQty?: number;
   discrepancyBundlesQty?: number;
+  extraCartons?: number;
+  missingCartons?: number;
+  isExtraOnly?: boolean;
   localOnly?: boolean; 
 }
 

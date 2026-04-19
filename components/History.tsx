@@ -18,6 +18,7 @@ type LabelSize = '10x15' | '3x4';
 
 export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending'>('ALL');
   const [showDamagedOnly, setShowDamagedOnly] = useState(false);
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
   const [batchPrintTripId, setBatchPrintTripId] = useState<string | null>(null);
@@ -51,11 +52,12 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       else if (role === 'center' && userCenter) isVisible = record.destination === userCenter;
       
       if (isVisible && role !== 'center' && destinationFilter !== 'ALL') isVisible = record.destination === destinationFilter;
+      if (isVisible && statusFilter !== 'ALL') isVisible = record.status === statusFilter;
       if (isVisible && showDamagedOnly) isVisible = (record.condition && record.condition !== 'intact') || record.hasDiscrepancy;
       
       return isVisible;
     }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  }, [records, role, userCode, userCenter, destinationFilter, showDamagedOnly]);
+  }, [records, role, userCode, userCenter, destinationFilter, statusFilter, showDamagedOnly]);
 
   const generateLabelHTML = (record: InventoryRecord, size: LabelSize) => {
     const pType = palletTypes.find(t => t.id === record.palletTypeId);
@@ -187,16 +189,27 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
           <span className="bg-slate-200 text-slate-700 px-3 py-1 rounded-full text-[10px] font-black">{filteredRecords.length} سجل</span>
         </div>
         
-        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+        <div className="flex flex-col gap-2 pb-2">
           {role !== 'center' && (
-            <>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar items-center border-b border-slate-100 pb-2">
+              <span className="text-[10px] font-black text-slate-400 whitespace-nowrap ml-1">المركز:</span>
               <button onClick={() => setDestinationFilter('ALL')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === 'ALL' ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>الكل</button>
               {centerOptions.map(center => (
                 <button key={center.id} onClick={() => setDestinationFilter(center.code)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${destinationFilter === center.code ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-500'}`}>{center.displayName}</button>
               ))}
-            </>
+            </div>
           )}
-          <button onClick={() => setShowDamagedOnly(!showDamagedOnly)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${showDamagedOnly ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 border border-rose-100 text-rose-600'}`}>⚠️ المتضرر</button>
+          <div className="flex gap-2 overflow-x-auto no-scrollbar items-center">
+            <span className="text-[10px] font-black text-slate-400 whitespace-nowrap ml-1">تصفية:</span>
+            <button onClick={() => setStatusFilter('ALL')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'ALL' ? 'bg-slate-800 text-white' : 'bg-slate-50 border text-slate-500'}`}>جميع الحالات</button>
+            <button onClick={() => setStatusFilter('received')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'received' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>تم الاستلام ✅</button>
+            <button onClick={() => setStatusFilter('in_transit')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'in_transit' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-600'}`}>في الطريق 🚚</button>
+            <button onClick={() => setStatusFilter('pending')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'pending' ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-600'}`}>معلق 🏭</button>
+            
+            <div className="w-px h-6 bg-slate-200 mx-1 flex-shrink-0"></div>
+            
+            <button onClick={() => setShowDamagedOnly(!showDamagedOnly)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${showDamagedOnly ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 border border-rose-100 text-rose-600'}`}>⚠️ المتضرر</button>
+          </div>
         </div>
       </div>
 
@@ -219,6 +232,16 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                     <h3 className="text-sm font-black text-slate-800">{pType?.stageName}</h3>
                     <div className="flex flex-wrap items-center gap-2">
                        <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-widest">{record.palletBarcode}</span>
+                       {record.extraCartons && (
+                         <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">
+                           {record.isExtraOnly ? `${record.extraCartons} كرتون إضافي فقط` : `+ ${record.extraCartons} كراتين إضافية`}
+                         </span>
+                       )}
+                       {record.missingCartons && (
+                         <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-100">
+                           - {record.missingCartons} كراتين ناقصة
+                         </span>
+                       )}
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${cond.color}`}>{cond.text}</span>
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${
                          record.status === 'received' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
