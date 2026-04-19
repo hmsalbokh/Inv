@@ -4,7 +4,7 @@ import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, Use
 import { analyzeInventory } from '../services/geminiService';
 import * as XLSX from 'xlsx';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, doc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc } from 'firebase/firestore';
 
 interface Props {
   palletTypes: PalletType[];
@@ -150,6 +150,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     quantities: {} as Record<string, { cartons: number, bundles: number }>
   });
 
+  const [editingTripId, setEditingTripId] = useState<string | null>(null);
+
   const centerOptions = useMemo(() => users.filter(u => u.role === 'center'), [users]);
 
   useEffect(() => {
@@ -259,8 +261,42 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     }
   };
 
+  const handleDeleteDistTrip = async (tripId: string) => {
+    if (!window.confirm('هل أنت متأكد من رغبتك في حذف هذه الرحلة المخططة؟')) return;
+    try {
+      await deleteDoc(doc(db, 'distributionTrips', tripId));
+      onNotify('نجاح', 'تم حذف رحلة التوزيع بنجاح');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `distributionTrips/${tripId}`);
+    }
+  };
+
+  const handleEditDistTrip = (trip: DistributionTrip) => {
+    const quantitiesMap: Record<string, { cartons: number, bundles: number }> = {};
+    trip.quantities.forEach(q => {
+      const type = palletTypes.find(t => t.id === q.palletTypeId);
+      const bPerC = type?.bundlesPerCarton || 1;
+      const fullCartons = Math.floor(q.bundleCount / bPerC);
+      const remainingBundles = q.bundleCount % bPerC;
+      quantitiesMap[q.palletTypeId] = {
+        cartons: fullCartons,
+        bundles: remainingBundles
+      };
+    });
+
+    setDistTripData({
+      tripNumber: trip.tripNumber,
+      date: trip.date,
+      originCenter: trip.originCenter,
+      destinationCity: trip.destinationCity,
+      quantities: quantitiesMap
+    });
+    setEditingTripId(trip.id);
+    setShowDistForm(true);
+  };
+
   const handleCreateManualDistTrip = async () => {
-    console.log('Attempting to create manual dist trip...', distTripData);
+    console.log('Attempting to create/update manual dist trip...', distTripData);
     if (!distTripData.tripNumber || !distTripData.originCenter || !distTripData.destinationCity) {
       onNotify('تنبيه', 'يرجى إكمال جميع البيانات الأساسية');
       return;
@@ -293,19 +329,32 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     }
 
     try {
-      const id = generateUUID();
-      const newTrip: DistributionTrip = {
-        id,
-        tripNumber: distTripData.tripNumber,
-        date: distTripData.date,
-        originCenter: distTripData.originCenter,
-        destinationCity: distTripData.destinationCity,
-        status: 'planned',
-        quantities
-      };
-      await setDoc(doc(db, 'distributionTrips', id), newTrip);
-      onNotify('نجاح', 'تم إضافة الرحلة بنجاح');
+      if (editingTripId) {
+        await updateDoc(doc(db, 'distributionTrips', editingTripId), {
+          tripNumber: distTripData.tripNumber,
+          date: distTripData.date,
+          originCenter: distTripData.originCenter,
+          destinationCity: distTripData.destinationCity,
+          quantities
+        });
+        onNotify('نجاح', 'تم تحديث الرحلة بنجاح');
+      } else {
+        const id = generateUUID();
+        const newTrip: DistributionTrip = {
+          id,
+          tripNumber: distTripData.tripNumber,
+          date: distTripData.date,
+          originCenter: distTripData.originCenter,
+          destinationCity: distTripData.destinationCity,
+          status: 'planned',
+          quantities
+        };
+        await setDoc(doc(db, 'distributionTrips', id), newTrip);
+        onNotify('نجاح', 'تم إضافة الرحلة بنجاح');
+      }
+      
       setShowDistForm(false);
+      setEditingTripId(null);
       setDistTripData({
         tripNumber: '',
         date: new Date().toISOString().split('T')[0],
@@ -314,7 +363,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         quantities: {}
       });
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'distributionTrips');
+      handleFirestoreError(e, editingTripId ? OperationType.UPDATE : OperationType.CREATE, 'distributionTrips');
     }
   };
 
@@ -628,8 +677,18 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn overflow-y-auto">
           <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[calc(100vh-2rem)] relative my-auto">
             <div className="p-6 bg-indigo-900 text-white flex justify-between items-center shrink-0">
-              <h3 className="font-black text-lg">إضافة رحلة توزيع يدوية</h3>
-              <button onClick={() => setShowDistForm(false)} className="text-white/60 hover:text-white p-2">✕</button>
+              <h3 className="font-black text-lg">{editingTripId ? 'تعديل رحلة توزيع' : 'إضافة رحلة توزيع يدوية'}</h3>
+              <button onClick={() => {
+                setShowDistForm(false);
+                setEditingTripId(null);
+                setDistTripData({
+                  tripNumber: '',
+                  date: new Date().toISOString().split('T')[0],
+                  originCenter: '',
+                  destinationCity: '',
+                  quantities: {}
+                });
+              }} className="text-white/60 hover:text-white p-2">✕</button>
             </div>
             <div className="p-6 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
               <div className="grid grid-cols-2 gap-4">
@@ -1117,6 +1176,16 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                     <div className="text-[8px] font-bold text-slate-500">{trip.destinationCity} - {trip.date}</div>
                                   </div>
                                   <div className="flex items-center gap-2">
+                                    {(isAdmin || isMonitor || (role === 'center' && userCenter === center.code)) && (
+                                      <div className="flex items-center gap-1 ml-2">
+                                        <button onClick={() => handleEditDistTrip(trip)} className="p-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-indigo-100 hover:text-indigo-600 transition-all" title="تعديل">
+                                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                        </button>
+                                        <button onClick={() => handleDeleteDistTrip(trip.id)} className="p-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-rose-100 hover:text-rose-600 transition-all" title="حذف">
+                                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                      </div>
+                                    )}
                                     {hasShortage ? (
                                       <span className="bg-rose-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase">عجز في المخزون</span>
                                     ) : (
