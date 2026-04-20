@@ -1,6 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
 import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition, UserCredentials } from '../types';
+import { db } from '../firebase';
+import { doc, updateDoc, collection, addDoc } from 'firebase/firestore';
 
 declare var html2pdf: any;
 
@@ -69,10 +71,13 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
 
     return `
       <div style="width: 100%; height: 100%; border: ${isLarge ? '8px' : '4px'} solid black; padding: ${isLarge ? '8mm' : '4mm'}; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; background: white; font-family: 'Tajawal', sans-serif; overflow: hidden; text-align: center; page-break-after: always;">
-         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: ${isLarge ? '4px' : '2px'} solid black; padding-bottom: ${isLarge ? '10px' : '5px'};">
-            <div style="text-align: right;">
-               <div style="font-size: ${isLarge ? '12px' : '8px'}; font-weight: 800;">توصيل الكتب</div>
-               <div style="font-size: ${isLarge ? '48px' : '26px'}; font-weight: 900; line-height: 0.9;">مشروع التعليم</div>
+         <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: ${isLarge ? '4px' : '2px'} solid black; padding-bottom: ${isLarge ? '10px' : '5px'};">
+            <div style="display: flex; gap: 10px; align-items: center;">
+               <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${record.palletBarcode}" style="width: ${isLarge ? '50px' : '30px'}; height: ${isLarge ? '50px' : '30px'};" />
+               <div style="text-align: right;">
+                  <div style="font-size: ${isLarge ? '12px' : '8px'}; font-weight: 800;">توصيل الكتب</div>
+                  <div style="font-size: ${isLarge ? '32px' : '18px'}; font-weight: 900; line-height: 1.1;">مشروع التعليم</div>
+               </div>
             </div>
             <div style="background: black; color: white; padding: ${isLarge ? '8px 12px' : '4px 6px'}; border-radius: 6px; text-align: center;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700;">الرحلة</div>
@@ -145,6 +150,38 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       html2pdf().from(container).set(opt).save().then(() => { document.body.removeChild(container); });
     }
     setActiveChoiceId(null);
+  };
+
+  const handleForceUpdate = async (record: InventoryRecord) => {
+    if (window.confirm('هل أنت متأكد من إجبار تعديل وتسجيل حالة هذا الباركود يدوياً؟')) {
+       try {
+         const updates = { 
+            status: record.status === 'pending' ? 'in_transit' : 'received', 
+            timestamp: Date.now() 
+         };
+         
+         if (record.status === 'pending') {
+            (updates as any).factoryTimestamp = Date.now();
+         } else if (record.status === 'in_transit') {
+            (updates as any).centerTimestamp = Date.now();
+         }
+
+         await updateDoc(doc(db, 'records', record.id), updates);
+         
+         await addDoc(collection(db, 'system_logs'), {
+             timestamp: Date.now(),
+             type: 'system_error',
+             userId: userCode || 'مجهول',
+             message: 'تجاوز بصلاحية الإدارة',
+             details: `تم إجبار تغيير حالة الطبلية (${record.palletBarcode}) يدوياً من السجل إلى: ${updates.status}`
+         });
+
+         alert('تم تعديل الحالة بنجاح عبر التجاوز اليدوي.');
+       } catch (err) {
+         console.error('Failed to force update', err);
+         alert('حدث خطأ أثناء تعديل الحالة.');
+       }
+    }
   };
 
   return (
@@ -280,6 +317,15 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                       >
                         <span>📦 طباعة كافة ملصقات هذه الرحلة</span>
                       </button>
+                    )}
+
+                    {role === 'monitor' && record.status !== 'received' && (
+                       <button 
+                         onClick={() => handleForceUpdate(record)}
+                         className="w-full bg-amber-50 text-amber-700 border border-amber-100 py-3 rounded-2xl text-[10px] font-black flex items-center justify-center gap-2 active:scale-95 transition-all mt-2"
+                       >
+                         <span>⚡ إجبار التمرير وتخطي المسح (لحلول خلل النظام المباشرة)</span>
+                       </button>
                     )}
 
                     {(record.condition && record.condition !== 'intact') && (

@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { InventoryRecord, CenterCode, PalletCondition, PalletType } from '../types';
+import { db } from '../firebase';
+import { collection, addDoc } from 'firebase/firestore';
 
 interface PhotoStatus {
   id: string;
@@ -148,6 +150,17 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
         const record = records.find(r => r.palletBarcode === cleanBarcode);
         if (!record || record.status === 'received') {
           setStatus({ type: 'error', text: 'الباركود غير موجود أو مستلم مسبقاً.' });
+          
+          try {
+             await addDoc(collection(db, 'system_logs'), {
+               timestamp: Date.now(),
+               type: 'scan_error',
+               userId: userCenter || 'مجهول',
+               message: 'محاولة مسح باركود خاطئ أو مستلم',
+               details: `حاول المركز مسح باركود غير صالح: ${cleanBarcode}`
+             });
+          } catch(e) {}
+          
           setTimeout(() => setStatus({ type: null, text: '' }), 3000);
           return;
         }

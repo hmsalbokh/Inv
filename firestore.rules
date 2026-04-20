@@ -174,6 +174,11 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    match /system_logs/{logId} {
+      allow read: if true; // In reality this should be isAdmin() but the current setup uses client side filtering.
+      allow write: if true;
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;

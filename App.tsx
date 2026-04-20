@@ -273,13 +273,37 @@ export const App: React.FC = () => {
     
     try {
       const record = records.find(r => r.palletBarcode === cleanBarcode);
-      if (!record) return { success: false, message: 'الكود غير موجود' };
+      if (!record) {
+        if (currentUser.role === 'factory') {
+           try {
+             await setDoc(doc(db, 'system_logs', generateUUID()), {
+               timestamp: Date.now(),
+               type: 'scan_error',
+               userId: currentUser.code || 'مجهول',
+               message: 'محاولة مسح باركود غير موجود في المطبعة',
+               details: `حاولت المطبعة مسح باركود غير مدرج بالرحلات: ${cleanBarcode}`
+             });
+           } catch(e) {}
+        }
+        return { success: false, message: 'الكود غير موجود' };
+      }
 
       let updates: Partial<InventoryRecord> = {};
       let successMessage = 'تم التحديث بنجاح';
 
       if (currentUser.role === 'factory') {
-        if (record.status !== 'pending') return { success: false, message: 'هذه الطبلية تم مسحها مسبقاً بالتصدير' };
+        if (record.status !== 'pending') {
+           try {
+             await setDoc(doc(db, 'system_logs', generateUUID()), {
+               timestamp: Date.now(),
+               type: 'scan_error',
+               userId: currentUser.code || 'مجهول',
+               message: 'محاولة مسح طبلية مصدرة مسبقاً',
+               details: `حاولت المطبعة مسح باركود مصدر مسبقاً: ${cleanBarcode}`
+             });
+           } catch(e) {}
+           return { success: false, message: 'هذه الطبلية تم مسحها مسبقاً بالتصدير' };
+        }
         
         updates = { status: 'in_transit', timestamp: Date.now(), factoryTimestamp: Date.now(), truckId: currentTruckNumber };
 

@@ -2,6 +2,8 @@
 import React, { useState, useMemo } from 'react';
 import { UserCredentials } from '../types';
 import { SubulLogo } from './Dashboard';
+import { db } from '../firebase';
+import { collection, addDoc } from 'firebase/firestore';
 
 interface Props {
   users: UserCredentials[];
@@ -17,16 +19,56 @@ export const Login: React.FC<Props> = ({ users, onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const filteredUsers = useMemo(() => {
+  const groupedEntities = useMemo(() => {
     if (!category) return [];
-    return users.filter(u => u.role === category);
+    const uniqueCodes = new Map();
+    users.filter(u => u.role === category).forEach(u => {
+      if (!uniqueCodes.has(u.code)) {
+        // Find best display name for this code
+        let baseName = u.displayName;
+        if (baseName.includes('(')) {
+           baseName = baseName.split('(')[1].replace(')', '').trim();
+           // if standard format we might just use the code
+        } else {
+           // extract center name without user specific if possible, or just default to nice names
+           if (category === 'center') {
+             if (u.code === 'DMM') baseName = 'مركز الدمام';
+             else if (u.code === 'RYD') baseName = 'مركز الرياض';
+             else if (u.code === 'JED') baseName = 'مركز جدة';
+           } else if (category === 'factory') {
+             if (u.code === 'OPK') baseName = 'مطبعة العبيكان';
+             else if (u.code === 'UNI') baseName = 'المطبعة المتحدة';
+           }
+        }
+        uniqueCodes.set(u.code, { code: u.code, label: baseName });
+      }
+    });
+    return Array.from(uniqueCodes.values());
   }, [category, users]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const user = users.find(u => u.id === selectedEntityId);
-    if (user && user.username === username && user.password === password) { onLogin(user); }
-    else { setError('بيانات خطأ'); setTimeout(() => setError(''), 3000); }
+    // find any user that matches the selected code AND has the matching username/password
+    const user = users.find(u => u.code === selectedEntityId && u.username === username && u.password === password);
+    if (user) { 
+      onLogin(user); 
+    }
+    else { 
+      setError('بيانات خطأ'); 
+      setTimeout(() => setError(''), 3000); 
+      // Log the error
+      try {
+        await addDoc(collection(db, 'system_logs'), {
+          timestamp: Date.now(),
+          type: 'login_error',
+          userId: username || 'مجهول',
+          message: 'محاولة تسجيل دخول فاشلة',
+          details: `تمت محاولة الدخول الكود: ${selectedEntityId} باسم مستخدم غير صحيح: ${username}`
+        });
+      } catch (err) {
+        console.error('Failed to log error', err);
+      }
+    }
   };
 
   return (
@@ -55,8 +97,8 @@ export const Login: React.FC<Props> = ({ users, onLogin }) => {
         {category ? (
           <form onSubmit={handleLogin} className="space-y-4 animate-slideDown">
              <select value={selectedEntityId} onChange={e => setSelectedEntityId(e.target.value)} className="w-full p-5 rounded-2xl bg-slate-50 font-black text-xs outline-none border-2 border-slate-100 focus:border-indigo-500 transition-colors">
-                <option value="">اختر الحساب...</option>
-                {filteredUsers.map(u => <option key={u.id} value={u.id}>{u.displayName}</option>)}
+                <option value="">اختر المركز / الجهة...</option>
+                {groupedEntities.map(g => <option key={g.code} value={g.code}>{g.label}</option>)}
              </select>
              {selectedEntityId && (
                <div className="space-y-3 animate-fadeIn">

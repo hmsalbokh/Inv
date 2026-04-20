@@ -99,6 +99,20 @@
         "status": { "type": "string", "enum": ["planned", "dispatched"] }
       },
       "required": ["id", "tripNumber", "date", "originCenter", "destinationCity", "quantities", "status"]
+    },
+    "SystemLog": {
+      "title": "System Log",
+      "description": "A log of errors or system events",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "type": { "type": "string", "enum": ["login_error", "scan_error", "system_error"] },
+        "userId": { "type": "string" },
+        "message": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["timestamp", "type", "message", "details"]
     }
   },
   "firestore": {
@@ -125,6 +139,10 @@
     "distributionTrips": {
       "schema": "DistributionTrip",
       "description": "Collection of distribution trips"
+    },
+    "system_logs": {
+      "schema": "SystemLog",
+      "description": "Collection of system logs"
     }
   }
 }

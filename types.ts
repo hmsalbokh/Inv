@@ -74,3 +74,12 @@ export interface DistributionTrip {
   }[];
   status: 'planned' | 'dispatched';
 }
+
+export interface SystemLog {
+  id: string;
+  timestamp: number;
+  type: 'login_error' | 'scan_error' | 'system_error';
+  userId?: string;
+  message: string;
+  details: string;
+}
