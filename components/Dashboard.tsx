@@ -152,7 +152,16 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
 
-  const centerOptions = useMemo(() => users.filter(u => u.role === 'center'), [users]);
+  const centerOptions = useMemo(() => {
+    const centers = users.filter(u => u.role === 'center');
+    const uniqueCenters = new Map();
+    centers.forEach(c => {
+      if (!uniqueCenters.has(c.code)) {
+        uniqueCenters.set(c.code, c);
+      }
+    });
+    return Array.from(uniqueCenters.values());
+  }, [users]);
 
   useEffect(() => {
     if (centerOptions.length > 0 && !cCode) setCCode(centerOptions[0].code);
@@ -554,10 +563,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
     return `
       <div class="label-card" style="width: 100%; height: 100%; border: ${isLarge ? '8px' : '4px'} solid black; padding: ${isLarge ? '8mm' : '4mm'}; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; background: white; font-family: 'Tajawal', sans-serif; overflow: hidden; text-align: center; page-break-after: always;">
-         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: ${isLarge ? '4px' : '2px'} solid black; padding-bottom: ${isLarge ? '10px' : '5px'};">
-            <div style="text-align: right;">
-               <div style="font-size: ${isLarge ? '12px' : '8px'}; font-weight: 800;">توصيل الكتب</div>
-               <div style="font-size: ${isLarge ? '48px' : '26px'}; font-weight: 900; line-height: 0.9;">مشروع التعليم</div>
+         <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: ${isLarge ? '4px' : '2px'} solid black; padding-bottom: ${isLarge ? '10px' : '5px'};">
+            <div style="display: flex; gap: 10px; align-items: center;">
+               <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${record?.palletBarcode}" style="width: ${isLarge ? '50px' : '30px'}; height: ${isLarge ? '50px' : '30px'};" />
+               <div style="text-align: right;">
+                  <div style="font-size: ${isLarge ? '12px' : '8px'}; font-weight: 800;">توصيل الكتب</div>
+                  <div style="font-size: ${isLarge ? '32px' : '18px'}; font-weight: 900; line-height: 1.1;">مشروع التعليم</div>
+               </div>
             </div>
             <div style="background: white; color: black; border: ${isLarge ? '3px' : '2px'} solid black; padding: ${isLarge ? '8px 12px' : '4px 6px'}; border-radius: 6px; text-align: center;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700;">الرحلة</div>

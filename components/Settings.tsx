@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { PalletType, UserCredentials, UserRole, PressCode, CenterCode } from '../types';
+import { PalletType, UserCredentials, UserRole, PressCode, CenterCode, SystemLog } from '../types';
 import { ConfirmModal } from './ConfirmModal';
+import { db } from '../firebase';
+import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 
 interface Props {
   palletTypes: PalletType[];
@@ -16,10 +18,22 @@ interface Props {
 }
 
 export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, onUpdate, onAdd, onDelete, onResetData, onResetStages, onNotify }) => {
-  const [tab, setTab] = useState<'stages' | 'users'>('users');
+  const [tab, setTab] = useState<'stages' | 'users' | 'logs'>('users');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showResetStagesConfirm, setShowResetStagesConfirm] = useState(false);
   const [showDeleteUserConfirm, setShowDeleteUserConfirm] = useState<string | null>(null);
+  
+  const [logs, setLogs] = useState<SystemLog[]>([]);
+
+  useEffect(() => {
+    if (tab === 'logs') {
+      const q = query(collection(db, 'system_logs'), orderBy('timestamp', 'desc'), limit(100));
+      const unsub = onSnapshot(q, (snap) => {
+        setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() } as SystemLog)));
+      });
+      return () => unsub();
+    }
+  }, [tab]);
   
   const [showUserForm, setShowUserForm] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -97,11 +111,48 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
       <div className="flex bg-slate-200/50 p-1.5 rounded-3xl gap-1 sticky top-0 z-10 backdrop-blur-md">
         <button onClick={() => setTab('stages')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'stages' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>📚 المراحل</button>
         <button onClick={() => setTab('users')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'users' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>👤 المستخدمين</button>
+        <button onClick={() => setTab('logs')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'logs' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>🚨 سجل الأخطاء</button>
       </div>
 
       <div className="px-4">
         <button onClick={() => setShowResetConfirm(true)} className="w-full bg-rose-50 text-rose-600 p-4 rounded-2xl border border-rose-100 font-black text-xs active:scale-95 transition-all mb-4">🗑️ تصفير كافة البيانات السحابية</button>
       </div>
+
+      {tab === 'logs' && (
+        <div className="space-y-4 animate-fadeIn px-2">
+          <div className="flex justify-between items-center px-2">
+            <h2 className="text-sm font-black text-slate-800">سجل أخطاء النظام الحية</h2>
+            <span className="text-[10px] font-bold text-slate-400">آخر 100 خطأ</span>
+          </div>
+          <div className="space-y-3">
+             {logs.length === 0 ? (
+                <div className="text-center p-8 bg-slate-50 rounded-3xl">
+                   <p className="text-slate-400 font-bold text-xs">لا توجد أخطاء مسجلة حالياً</p>
+                </div>
+             ) : (
+                logs.map(log => (
+                  <div key={log.id} className={`p-4 rounded-3xl border-2 flex flex-col gap-2 ${log.type === 'login_error' ? 'bg-amber-50 border-amber-100' : 'bg-rose-50 border-rose-100'}`}>
+                    <div className="flex justify-between items-center">
+                       <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${log.type === 'login_error' ? 'bg-amber-200 text-amber-800' : 'bg-rose-200 text-rose-800'}`}>
+                           {log.type === 'login_error' ? 'دخول خاطئ' : 'مسح الباركود'}
+                       </span>
+                       <span className="text-[10px] font-bold text-slate-500" dir="ltr">
+                          {new Date(log.timestamp).toLocaleString('en-GB')}
+                       </span>
+                    </div>
+                    <div>
+                       <h4 className="text-xs font-black text-slate-800">{log.message}</h4>
+                       <p className="text-[10px] font-bold text-slate-600 mt-1">{log.details}</p>
+                    </div>
+                    <div className="text-[10px] font-bold text-indigo-600 bg-white/50 w-fit px-2 py-1 rounded-md mt-1">
+                       مُنفذ بواسطة: {log.userId}
+                    </div>
+                  </div>
+                ))
+             )}
+          </div>
+        </div>
+      )}
 
       {tab === 'users' && (
         <div className="space-y-4 animate-fadeIn">
@@ -199,12 +250,60 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
                   <input type="password" value={userFormData.password} onChange={e => setUserFormData({...userFormData, password: e.target.value})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="كلمة المرور" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                   <select value={userFormData.role} onChange={e => setUserFormData({...userFormData, role: e.target.value as UserRole})} className="bg-slate-50 p-4 rounded-xl text-xs font-black">
+                   <select value={userFormData.role} onChange={e => setUserFormData({...userFormData, role: e.target.value as UserRole, code: e.target.value === 'center' ? 'DMM' : e.target.value === 'factory' ? 'OPK' : 'STATS'})} className="bg-slate-50 p-4 rounded-xl text-xs font-black outline-none border border-slate-100">
                       <option value="factory">مطبعة</option>
                       <option value="center">مركز استلام</option>
                       <option value="monitor">مراقب/مسئول</option>
                    </select>
-                   <input type="text" value={userFormData.code} onChange={e => setUserFormData({...userFormData, code: e.target.value as any})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="الكود (RYD, OPK..)" />
+                   
+                   {userFormData.role === 'center' ? (
+                     <div className="relative">
+                       <select 
+                         value={['DMM', 'RYD', 'JED'].includes(userFormData.code) ? userFormData.code : userFormData.code ? 'OTHER' : 'DMM'} 
+                         onChange={e => setUserFormData({...userFormData, code: e.target.value === 'OTHER' ? '' : e.target.value})} 
+                         className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none"
+                       >
+                         <option value="DMM">مركز الدمام (DMM)</option>
+                         <option value="RYD">مركز الرياض (RYD)</option>
+                         <option value="JED">مركز جدة (JED)</option>
+                         <option value="OTHER">مركز آخر (إدخال يدوي)</option>
+                       </select>
+                       {!['DMM', 'RYD', 'JED'].includes(userFormData.code) && (
+                         <input 
+                           type="text" 
+                           value={userFormData.code} 
+                           onChange={e => setUserFormData({...userFormData, code: e.target.value})} 
+                           placeholder="أدخل كود المركز الجديد" 
+                           className="absolute inset-0 bg-white p-4 rounded-xl text-xs font-bold border border-indigo-500 outline-none w-full" 
+                           autoFocus
+                         />
+                       )}
+                     </div>
+                   ) : userFormData.role === 'factory' ? (
+                     <div className="relative">
+                       <select 
+                         value={['OPK', 'UNI'].includes(userFormData.code) ? userFormData.code : userFormData.code ? 'OTHER' : 'OPK'} 
+                         onChange={e => setUserFormData({...userFormData, code: e.target.value === 'OTHER' ? '' : e.target.value})} 
+                         className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none"
+                       >
+                         <option value="OPK">مطبعة العبيكان (OPK)</option>
+                         <option value="UNI">المطبعة المتحدة (UNI)</option>
+                         <option value="OTHER">مطبعة أخرى (إدخال يدوي)</option>
+                       </select>
+                       {!['OPK', 'UNI'].includes(userFormData.code) && (
+                         <input 
+                           type="text" 
+                           value={userFormData.code} 
+                           onChange={e => setUserFormData({...userFormData, code: e.target.value})} 
+                           placeholder="أدخل كود المطبعة الجديد" 
+                           className="absolute inset-0 bg-white p-4 rounded-xl text-xs font-bold border border-indigo-500 outline-none w-full" 
+                           autoFocus
+                         />
+                       )}
+                     </div>
+                   ) : (
+                     <input type="text" value={userFormData.code} onChange={e => setUserFormData({...userFormData, code: e.target.value})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="الكود (ADMIN, الخ)" />
+                   )}
                 </div>
               </div>
               <div className="flex gap-2 pt-2">
