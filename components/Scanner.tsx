@@ -70,6 +70,7 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
   const isProcessingScan = useRef<boolean>(false);
   
   const pendingCodes = records.filter(r => {
+    if (r.status === 'cancelled') return false; 
     if (role === 'factory') return r.tripId === currentTripId && r.status === 'pending';
     if (role === 'center') return r.destination === userCenter && r.status === 'in_transit';
     return false;
@@ -148,16 +149,17 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
       const cleanBarcode = barcode.trim().toUpperCase();
       if (role === 'center') {
         const record = records.find(r => r.palletBarcode === cleanBarcode);
-        if (!record || record.status === 'received') {
-          setStatus({ type: 'error', text: 'الباركود غير موجود أو مستلم مسبقاً.' });
+        if (!record || record.status === 'received' || record.status === 'cancelled') {
+          const errMsg = record?.status === 'cancelled' ? 'عذراً، هذه الرحلة تم إلغاؤها ولا يمكن استلام طبلياتها.' : 'الباركود غير موجود أو مستلم مسبقاً.';
+          setStatus({ type: 'error', text: errMsg });
           
           try {
              await addDoc(collection(db, 'system_logs'), {
                timestamp: Date.now(),
                type: 'scan_error',
                userId: userCenter || 'مجهول',
-               message: 'محاولة مسح باركود خاطئ أو مستلم',
-               details: `حاول المركز مسح باركود غير صالح: ${cleanBarcode}`
+               message: record?.status === 'cancelled' ? 'محاولة استلام طبلية لرحلة ملغاة' : 'محاولة مسح باركود خاطئ أو مستلم',
+               details: record?.status === 'cancelled' ? `حاول المركز مسح باركود لرحلة ملغاة: ${cleanBarcode}` : `حاول المركز مسح باركود غير صالح: ${cleanBarcode}`
              });
           } catch(e) {}
           

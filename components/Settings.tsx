@@ -244,11 +244,14 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-5 shadow-2xl relative">
               <h3 className="text-lg font-black text-slate-800">{editingUserId ? 'تعديل مستخدم' : 'إضافة مستخدم جديد'}</h3>
               <div className="space-y-3">
-                <input type="text" value={userFormData.displayName} onChange={e => setUserFormData({...userFormData, displayName: e.target.value})} className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="الاسم المعروض (مثلاً: مطبعة العبيكان)" />
+                <input type="text" value={userFormData.displayName} onChange={e => setUserFormData({...userFormData, displayName: e.target.value})} className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="الاسم المعروض للموظف (مثلاً: أحمد - مشرف الوردية)" />
                 <div className="grid grid-cols-2 gap-2">
                   <input type="text" value={userFormData.username} onChange={e => setUserFormData({...userFormData, username: e.target.value})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="اسم المستخدم" />
                   <input type="password" value={userFormData.password} onChange={e => setUserFormData({...userFormData, password: e.target.value})} className="bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="كلمة المرور" />
                 </div>
+                {userFormData.role !== 'monitor' && (
+                  <input type="text" value={userFormData.locationName || ''} onChange={e => setUserFormData({...userFormData, locationName: e.target.value})} className="w-full bg-slate-50 p-4 rounded-xl text-xs font-bold border border-slate-100 outline-none" placeholder="اسم المركز أو المطبعة الفعلي (اكتبه لمرة واحدة ليظهر للجميع)" />
+                )}
                 <div className="grid grid-cols-2 gap-2">
                    <select value={userFormData.role} onChange={e => setUserFormData({...userFormData, role: e.target.value as UserRole, code: e.target.value === 'center' ? 'DMM' : e.target.value === 'factory' ? 'OPK' : 'STATS'})} className="bg-slate-50 p-4 rounded-xl text-xs font-black outline-none border border-slate-100">
                       <option value="factory">مطبعة</option>

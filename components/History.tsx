@@ -29,8 +29,21 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   // جلب اسم المنشأة ديناميكياً
-  const getEntityName = (code: string) => users.find(u => u.code === code)?.displayName || code;
-  const centerOptions = useMemo(() => users.filter(u => u.role === 'center'), [users]);
+  const getEntityName = (code: string) => {
+     const u = users.find(u => u.code === code);
+     return u ? (u.locationName || u.displayName) : code;
+  };
+
+  const centerOptions = useMemo(() => {
+    const centers = users.filter(u => u.role === 'center');
+    const unique = new Map();
+    centers.forEach(c => {
+      if(!unique.has(c.code)) {
+        unique.set(c.code, { ...c, displayName: c.locationName || c.displayName });
+      }
+    });
+    return Array.from(unique.values());
+  }, [users]);
 
   const getConditionLabel = (record: InventoryRecord) => {
     if (record.hasDiscrepancy) {
