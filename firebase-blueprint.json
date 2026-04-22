@@ -8,6 +8,7 @@
         "id": { "type": "string" },
         "role": { "type": "string", "enum": ["factory", "center", "monitor"] },
         "code": { "type": "string" },
+        "locationName": { "type": "string" },
         "username": { "type": "string" },
         "password": { "type": "string" },
         "displayName": { "type": "string" }

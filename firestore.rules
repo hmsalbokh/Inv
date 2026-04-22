@@ -114,7 +114,8 @@ service cloud.firestore {
              data.role is string && isValidRole(data.role) &&
              data.code is string && data.code.size() > 0 &&
              data.username is string && data.username.size() > 0 &&
-             data.displayName is string && data.displayName.size() > 0;
+             data.displayName is string && data.displayName.size() > 0 &&
+             (!('locationName' in data) || data.locationName is string);
     }
 
     function isValidPalletType(data) {

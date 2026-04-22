@@ -3,16 +3,17 @@ export type UserRole = 'factory' | 'center' | 'monitor';
 // جعل الأكواد مرنة لتقبل أي قيم جديدة مضافة من الإعدادات
 export type PressCode = string;
 export type CenterCode = string;
-export type PalletStatus = 'pending' | 'in_transit' | 'received';
+export type PalletStatus = 'pending' | 'in_transit' | 'received' | 'cancelled';
 export type PalletCondition = 'intact' | 'damaged' | 'external_box_damage' | 'internal_content_damage' | 'both';
 
 export interface UserCredentials {
   id: string;
   role: UserRole;
   code: string; // كود المنشأة (مثلاً: OPK, RYD, KSA_01)
+  locationName?: string; // اسم المنشأة (مثلاً: مركز الرياض)
   username: string;
   password: string;
-  displayName: string;
+  displayName: string; // اسم الموظف
 }
 
 export interface PalletType {
@@ -58,7 +59,7 @@ export interface Trip {
   pressCode: PressCode;
   centerCode: CenterCode;
   startDate: number;
-  status: 'active' | 'completed';
+  status: 'active' | 'completed' | 'cancelled';
 }
 
 export interface DistributionTrip {

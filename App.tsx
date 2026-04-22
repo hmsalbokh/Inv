@@ -41,13 +41,13 @@ const generateUUID = () => {
 };
 
 const DEFAULT_USERS: UserCredentials[] = [
-  { id: '1', role: 'monitor', code: 'ADMIN', username: 'admin', password: 'H0566749388h', displayName: 'مسئول النظام' },
-  { id: '7', role: 'monitor', code: 'STATS', username: 'stats', password: '123', displayName: 'مسئول المراقبة والإحصاء' },
-  { id: '2', role: 'factory', code: 'OPK', username: 'opk', password: '123', displayName: 'مطبعة العبيكان' },
-  { id: '3', role: 'factory', code: 'UNI', username: 'uni', password: '123', displayName: 'المطبعة المتحدة' },
-  { id: '4', role: 'center', code: 'DMM', username: 'dmm', password: '123', displayName: 'مركز الدمام' },
-  { id: '5', role: 'center', code: 'RYD', username: 'ryd', password: '123', displayName: 'مركز الرياض' },
-  { id: '6', role: 'center', code: 'JED', username: 'jed', password: '123', displayName: 'مركز جدة' },
+  { id: '1', role: 'monitor', code: 'ADMIN', username: 'admin', password: 'H0566749388h', displayName: 'مسئول النظام', locationName: 'الإدارة' },
+  { id: '7', role: 'monitor', code: 'STATS', username: 'stats', password: '123', displayName: 'مسئول المراقبة', locationName: 'المراقبة والإحصاء' },
+  { id: '2', role: 'factory', code: 'OPK', username: 'opk', password: '123', displayName: 'موظف مطبعة العبيكان', locationName: 'مطبعة العبيكان' },
+  { id: '3', role: 'factory', code: 'UNI', username: 'uni', password: '123', displayName: 'موظف المطبعة المتحدة', locationName: 'المطبعة المتحدة' },
+  { id: '4', role: 'center', code: 'DMM', username: 'dmm', password: '123', displayName: 'موظف الدمام', locationName: 'مركز الدمام' },
+  { id: '5', role: 'center', code: 'RYD', username: 'ryd', password: '123', displayName: 'موظف الرياض', locationName: 'مركز الرياض' },
+  { id: '6', role: 'center', code: 'JED', username: 'jed', password: '123', displayName: 'موظف جدة', locationName: 'مركز جدة' },
 ];
 
 const DEFAULT_TYPES: PalletType[] = [

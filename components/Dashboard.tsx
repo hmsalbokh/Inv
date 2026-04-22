@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { ConfirmModal } from './ConfirmModal';
 import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, UserCredentials, DistributionTrip } from '../types';
 import { analyzeInventory } from '../services/geminiService';
 import * as XLSX from 'xlsx';
@@ -96,15 +97,17 @@ const StageCard: React.FC<{ type: PalletType, statsRecords: InventoryRecord[] }>
         </div>
       </div>
       
-      <div className="grid grid-cols-2 gap-3">
+      <div className={`grid ${type.stageCode.toUpperCase().startsWith('F') ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
         <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
           <span className="text-[8px] font-black text-slate-400 block mb-1 uppercase">الكراتين (المستلمة)</span>
           <span className="text-lg font-black text-indigo-900">{totalCartons.toLocaleString()}</span>
         </div>
-        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-          <span className="text-[8px] font-black text-slate-400 block mb-1 uppercase">الحزم (المستلمة)</span>
-          <span className="text-lg font-black text-emerald-700">{totalBundles.toLocaleString()}</span>
-        </div>
+        {!type.stageCode.toUpperCase().startsWith('F') && (
+          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+            <span className="text-[8px] font-black text-slate-400 block mb-1 uppercase">الحزم (المستلمة)</span>
+            <span className="text-lg font-black text-emerald-700">{totalBundles.toLocaleString()}</span>
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2 pt-3 border-t border-slate-50">
@@ -151,13 +154,17 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   });
 
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
+  const [selectedTripForControl, setSelectedTripForControl] = useState<string>('');
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [tripIdToCancel, setTripIdToCancel] = useState<string | null>(null);
+  const [showCancelledInControl, setShowCancelledInControl] = useState(false);
 
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
     const uniqueCenters = new Map();
     centers.forEach(c => {
       if (!uniqueCenters.has(c.code)) {
-        uniqueCenters.set(c.code, c);
+        uniqueCenters.set(c.code, { ...c, displayName: c.locationName || c.displayName });
       }
     });
     return Array.from(uniqueCenters.values());
@@ -191,7 +198,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const isAdmin = useMemo(() => userCode === 'ADMIN', [userCode]);
 
   const statsRecords = useMemo(() => {
-    return (role === 'monitor' || isAdmin) ? records : records.filter(r => {
+    const baseRecords = records.filter(r => r.status !== 'cancelled');
+    return (role === 'monitor' || isAdmin) ? baseRecords : baseRecords.filter(r => {
       if (role === 'factory') return r.palletBarcode.includes(userCode);
       if (role === 'center') return r.destination === userCenter;
       return false;
@@ -429,7 +437,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
         if (palletCount > 0 || plannedQty > 0) {
           exportData.push({
-            'المركز': center.displayName,
+            'المركز': center.locationName || center.displayName,
             'المرحلة': type.stageName,
             'عدد الطبليات (المستلمة)': palletCount,
             'التباين (كرتون)': diffCartons,
@@ -453,6 +461,81 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Inventory Report");
     XLSX.writeFile(wb, `Inventory_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const handleCancelTrip = (tripId: string) => {
+    const trip = trips.find(t => t.id === tripId);
+    if (!trip) return;
+
+    if (trip.status === 'cancelled') {
+        onNotify('تنبيه', 'هذه الرحلة ملغاة بالفعل');
+        return;
+    }
+
+    const tripRecords = records.filter(r => r.tripId === tripId);
+    const isAnyReceived = tripRecords.some(r => r.status === 'received');
+
+    if (isAnyReceived) {
+      onNotify('خطأ', 'لا يمكن إلغاء رحلة تم استلام بعض طبلياتها بالفعل.');
+      return;
+    }
+
+    setTripIdToCancel(tripId);
+    setShowCancelModal(true);
+  };
+
+  const confirmCancelTrip = async () => {
+    if (!tripIdToCancel) return;
+    const trip = trips.find(t => t.id === tripIdToCancel);
+    if (!trip) return;
+
+    try {
+      const tripRecords = records.filter(r => r.tripId === tripIdToCancel);
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'trips', tripIdToCancel), { status: 'cancelled' });
+      
+      tripRecords.forEach(r => {
+        batch.update(doc(db, 'records', r.id), { status: 'cancelled' });
+      });
+      
+      await batch.commit();
+      onNotify('نجاح', `تم إلغاء الرحلة #${trip.tripNumber} بنجاح.`);
+      setShowCancelModal(false);
+      setTripIdToCancel(null);
+      setSelectedTripForControl('');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'trips');
+    }
+  };
+
+  const handleExportTripPallets = (tripId: string) => {
+    const trip = trips.find(t => t.id === tripId);
+    if (!trip) return;
+    const tripRecords = records.filter(r => r.tripId === tripId);
+
+    if (tripRecords.length === 0) {
+      onNotify('تنبيه', 'لا يوجد طبليات لهذه الرحلة');
+      return;
+    }
+
+    const exportData = tripRecords.map(r => {
+      const pType = palletTypes.find(t => t.id === r.palletTypeId);
+      return {
+        'رقم الرحلة': trip?.tripNumber || '---',
+        'باركود الطبلية': r.palletBarcode,
+        'المرحلة': pType?.stageName || '---',
+        'الوجهة': users.find(u => u.code === r.destination)?.displayName || r.destination,
+        'الحالة': r.status === 'received' ? 'تم الاستلام' : r.status === 'in_transit' ? 'في الطريق' : r.status === 'cancelled' ? 'ملغاة' : 'في المطبعة',
+        'كراتين إضافية': r.extraCartons || 0,
+        'كراتين ناقصة': r.missingCartons || 0,
+        'تاريخ الإنشاء': r.timestamp ? new Date(r.timestamp).toLocaleString('ar-SA') : '---'
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Trip Pallets");
+    XLSX.writeFile(wb, `Trip_${trip?.tripNumber || 'Pallets'}_Details.xlsx`);
   };
 
   const currentTrip = useMemo(() => trips.find(t => t.id === currentTripId), [trips, currentTripId]);
@@ -496,6 +579,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
     const totalBundles = stageSummary.reduce((acc, s) => acc + s.totalBundles, 0);
     const totalCartons = stageSummary.reduce((acc, s) => acc + s.totalCartons, 0);
+    const totalBooksCartons = stageSummary.filter(s => !s.stageCode.toUpperCase().startsWith('F')).reduce((acc, s) => acc + s.totalCartons, 0);
+    const totalEmptyCartons = stageSummary.filter(s => s.stageCode.toUpperCase().startsWith('F')).reduce((acc, s) => acc + s.totalCartons, 0);
 
     // حساب إجمالي النقص/الزيادة
     let totalDiffCartons = 0;
@@ -542,6 +627,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       inTransit: statsRecords.filter(r => r.status === 'in_transit').length,
       totalCartons,
       totalBundles,
+      totalBooksCartons,
+      totalEmptyCartons,
       totalDiffCartons,
       totalDiffBundles,
       stageSummary,
@@ -860,28 +947,77 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         </section>
       )}
 
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center text-center">
-          <span className="text-3xl mb-2">📦</span>
-          <span className="text-3xl font-black text-slate-800">{stats.total}</span>
-          <span className="text-[10px] font-bold text-slate-400">إجمالي الطبليات</span>
-        </div>
-        <div className="bg-emerald-50 p-6 rounded-[2.5rem] shadow-sm border border-emerald-100 flex flex-col items-center text-center">
-          <span className="text-3xl mb-2">✅</span>
-          <span className="text-3xl font-black text-emerald-700">{stats.received}</span>
-          <span className="text-[10px] font-bold text-emerald-500">
-            {role === 'center' ? 'تم استلامها (في المركز)' : 'تم استلامها (في المراكز)'}
-          </span>
-        </div>
-        <div className="bg-indigo-50 p-6 rounded-[2.5rem] shadow-sm border border-indigo-100 flex flex-col items-center text-center">
-          <span className="text-3xl mb-2">🏭</span>
-          <span className="text-3xl font-black text-indigo-700">{stats.inFactory}</span>
-          <span className="text-[10px] font-bold text-indigo-500">في المطبعة</span>
-        </div>
-        <div className="bg-amber-50 p-6 rounded-[2.5rem] shadow-sm border border-amber-100 flex flex-col items-center text-center">
-          <span className="text-3xl mb-2">🚚</span>
-          <span className="text-3xl font-black text-amber-700">{stats.inTransit}</span>
-          <span className="text-[10px] font-bold text-amber-500">في الطريق</span>
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {(isAdmin || isMonitor) && (
+          <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📑</span>
+              <h3 className="text-sm font-black text-slate-800">تصدير تفاصيل الرحلات</h3>
+            </div>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between px-2">
+                <label className="flex items-center gap-2 cursor-pointer group">
+                  <input 
+                    type="checkbox" 
+                    checked={showCancelledInControl}
+                    onChange={e => setShowCancelledInControl(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600 rounded"
+                  />
+                  <span className="text-[10px] font-black text-slate-500 group-hover:text-indigo-600 transition-colors">عرض الرحلات الملغاة</span>
+                </label>
+              </div>
+              <select 
+                className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 text-xs font-bold focus:border-indigo-500 outline-none transition-all"
+                value={selectedTripForControl}
+                onChange={(e) => setSelectedTripForControl(e.target.value)}
+              >
+                <option value="">اختر رحلة للتحكم...</option>
+                {trips.filter(t => showCancelledInControl || t.status !== 'cancelled').map(trip => (
+                  <option key={trip.id} value={trip.id}>
+                    رحلة #{trip.tripNumber} ({getDisplayName(trip.pressCode)}) - {trip.destinationCity} {trip.status === 'cancelled' ? '(ملغاة)' : ''}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                 <button 
+                   disabled={!selectedTripForControl}
+                   onClick={() => handleExportTripPallets(selectedTripForControl)}
+                   className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-emerald-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
+                 >📊 تصدير Excel</button>
+                 <button 
+                   disabled={!selectedTripForControl}
+                   onClick={() => {
+                     handleCancelTrip(selectedTripForControl);
+                   }}
+                   className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-rose-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
+                 >🚫 إلغاء الرحلة</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 flex-1">
+          <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-center text-center">
+            <span className="text-3xl mb-2">📦</span>
+            <span className="text-3xl font-black text-slate-800">{stats.total}</span>
+            <span className="text-[10px] font-bold text-slate-400">إجمالي الطبليات</span>
+          </div>
+          <div className="bg-emerald-50 p-6 rounded-[2.5rem] shadow-sm border border-emerald-100 flex flex-col items-center text-center">
+            <span className="text-3xl mb-2">✅</span>
+            <span className="text-3xl font-black text-emerald-700">{stats.received}</span>
+            <span className="text-[10px] font-bold text-emerald-500">
+              {role === 'center' ? 'تم استلامها (في المركز)' : 'تم استلامها (في المراكز)'}
+            </span>
+          </div>
+          <div className="bg-indigo-50 p-6 rounded-[2.5rem] shadow-sm border border-indigo-100 flex flex-col items-center text-center">
+            <span className="text-3xl mb-2">🏭</span>
+            <span className="text-3xl font-black text-indigo-700">{stats.inFactory}</span>
+            <span className="text-[10px] font-bold text-indigo-500">في المطبعة</span>
+          </div>
+          <div className="bg-amber-50 p-6 rounded-[2.5rem] shadow-sm border border-amber-100 flex flex-col items-center text-center">
+            <span className="text-3xl mb-2">🚚</span>
+            <span className="text-3xl font-black text-amber-700">{stats.inTransit}</span>
+            <span className="text-[10px] font-bold text-amber-500">في الطريق</span>
+          </div>
         </div>
       </section>
 
@@ -892,9 +1028,17 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                <h2 className="text-lg font-black text-indigo-900">📊 تقرير التلفيات والمخزون</h2>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100">
-                <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الكتب (كراتين) المستلمة</span>
-                <span className="text-2xl font-black text-emerald-900">{stats.totalCartons.toLocaleString()} كرتون</span>
+              <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100 flex justify-between items-center">
+                <div>
+                   <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الكتب (كراتين) المستلمة</span>
+                   <span className="text-2xl font-black text-emerald-900">{stats.totalBooksCartons.toLocaleString()} كرتون</span>
+                </div>
+                {stats.totalEmptyCartons > 0 && (
+                  <div className="text-left">
+                     <span className="text-[8px] font-bold text-emerald-500/80 block mb-1">فوارغ إضافية</span>
+                     <span className="text-lg font-black text-emerald-700">+{stats.totalEmptyCartons.toLocaleString()}</span>
+                  </div>
+                )}
               </div>
               <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100">
                 <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الحزم المستلمة</span>
@@ -963,6 +1107,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               
               let centerCartons = 0;
               let centerBundles = 0;
+              let centerEmptyCartons = 0;
               receivedRecords.forEach(r => {
                 const type = palletTypes.find(t => t.id === r.palletTypeId);
                 if (type) {
@@ -985,8 +1130,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     c += sign * diffC;
                     b += sign * ((diffC * type.bundlesPerCarton) + diffB);
                   }
-                  centerCartons += c;
-                  centerBundles += b;
+                  
+                  if (type.stageCode.toUpperCase().startsWith('F')) {
+                    centerEmptyCartons += c;
+                  } else {
+                    centerCartons += c;
+                    centerBundles += b;
+                  }
                 }
               });
 
@@ -1027,15 +1177,21 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-slate-50 p-2 rounded-xl text-center">
-                      <span className="text-[8px] font-black text-slate-400 uppercase block">الكراتين</span>
+                  <div className={`grid ${centerEmptyCartons > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+                    <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center">
+                      <span className="text-[8px] font-black text-slate-400 uppercase block">الكتب (كراتين)</span>
                       <span className="text-sm font-black text-indigo-900">{centerCartons.toLocaleString()}</span>
                     </div>
-                    <div className="bg-slate-50 p-2 rounded-xl text-center">
+                    <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center">
                       <span className="text-[8px] font-black text-slate-400 uppercase block">الحزم</span>
                       <span className="text-sm font-black text-emerald-700">{centerBundles.toLocaleString()}</span>
                     </div>
+                    {centerEmptyCartons > 0 && (
+                      <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center border border-emerald-100 bg-emerald-50/50">
+                        <span className="text-[8px] font-black text-emerald-500 uppercase block">كراتين فارغة</span>
+                        <span className="text-sm font-black text-emerald-700">+{centerEmptyCartons.toLocaleString()}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2 pt-2 border-t border-slate-50">
@@ -1449,6 +1605,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-black text-slate-800">ملصقات الرحلة: #{currentTrip?.tripNumber}</h3>
               <div className="flex gap-2">
+                <button onClick={() => handleExportTripPallets(currentTrip?.id || '')} className="bg-emerald-600 text-white px-4 py-2 rounded-xl font-black text-[10px] flex items-center gap-1 shadow-sm hover:bg-emerald-700 transition-all">📊 تصدير Excel</button>
                 <button onClick={() => setIsBatchPrinting(true)} className="bg-indigo-900 text-white px-4 py-2 rounded-xl font-black text-[10px]">🖨️ طباعة الكل</button>
                 <button onClick={() => setShowLabels(false)} className="bg-slate-200 text-slate-700 px-4 py-2 rounded-xl font-black text-[10px]">إغلاق</button>
               </div>
@@ -1467,6 +1624,20 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={showCancelModal}
+        title="تأكيد إلغاء الرحلة"
+        message={`⚠️ تحذير: هل أنت متأكد من إلغاء الرحلة رقم #${trips.find(t => t.id === tripIdToCancel)?.tripNumber}؟\nستبقى الرحلة في السجلات كـ "ملغاة" ولن تدخل في الإحصائيات.`}
+        type="danger"
+        onConfirm={confirmCancelTrip}
+        onCancel={() => {
+          setShowCancelModal(false);
+          setTripIdToCancel(null);
+        }}
+        confirmText="نعم، إلغاء الرحلة"
+        cancelText="تراجع"
+      />
     </div>
   );
 };
