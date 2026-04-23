@@ -5,7 +5,7 @@ import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, Use
 import { analyzeInventory } from '../services/geminiService';
 import * as XLSX from 'xlsx';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc, deleteField } from 'firebase/firestore';
 
 interface Props {
   palletTypes: PalletType[];
@@ -144,6 +144,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploadingExcel, setIsUploadingExcel] = useState(false);
+  const [isUploadingActual, setIsUploadingActual] = useState(false);
   const [showDistForm, setShowDistForm] = useState(false);
   const [distTripData, setDistTripData] = useState({
     tripNumber: '',
@@ -158,6 +159,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [tripIdToCancel, setTripIdToCancel] = useState<string | null>(null);
   const [showCancelledInControl, setShowCancelledInControl] = useState(false);
+  const [showRevertModal, setShowRevertModal] = useState(false);
+  const [tripIdToRevert, setTripIdToRevert] = useState<string | null>(null);
 
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
@@ -269,6 +272,71 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     reader.readAsBinaryString(file);
   };
 
+  const handleActualExecutionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingActual(true);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as any[];
+
+        const batch = writeBatch(db);
+        let matchCount = 0;
+
+        data.forEach((row) => {
+          const tripNumber = String(row['رقم الرحلة'] || row['tripNumber']);
+          
+          // Find if this trip already exists in planned trips
+          const existingTrip = distributionTrips.find(t => t.tripNumber === tripNumber);
+          
+          if (existingTrip) {
+            matchCount++;
+            const executedDate = String(row['تاريخ التنفيذ'] || row['تاريخ الرحلة'] || row['date'] || new Date().toISOString().split('T')[0]);
+            
+            const executedQuantities = palletTypes.map(type => {
+              const cartons = Number(row[type.stageCode] || 0);
+              const extraBundles = Number(row[`${type.stageCode}L`] || 0);
+              const bPerC = type.bundlesPerCarton || 1;
+              const totalBundles = (cartons * bPerC) + extraBundles;
+              const finalCartonCount = Math.ceil(totalBundles / bPerC);
+
+              return {
+                palletTypeId: type.id,
+                cartonCount: finalCartonCount,
+                bundleCount: totalBundles
+              };
+            }).filter(q => q.bundleCount > 0);
+
+            batch.update(doc(db, 'distributionTrips', existingTrip.id), {
+              status: 'executed',
+              executedDate,
+              executedQuantities
+            });
+          }
+        });
+
+        if (matchCount > 0) {
+          await batch.commit();
+          onNotify('نجاح', `تم مطابقة واعتماد ${matchCount} رحلات فعلية بنجاح`);
+        } else {
+          onNotify('تنبيه', 'لم يتم العثور على أي رحلات مطابقة في الخطة');
+        }
+      } catch (err) {
+        console.error('Actual update error:', err);
+        onNotify('خطأ', 'حدث خطأ أثناء معالجة ملف التنفيذ الفعلي');
+      } finally {
+        setIsUploadingActual(false);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const handleDispatchTrip = async (tripId: string) => {
     try {
       await updateDoc(doc(db, 'distributionTrips', tripId), { status: 'dispatched' });
@@ -285,6 +353,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       onNotify('نجاح', 'تم حذف رحلة التوزيع بنجاح');
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `distributionTrips/${tripId}`);
+    }
+  };
+
+  const handleRevertExecutionConfirm = async () => {
+    if (!tripIdToRevert) return;
+    try {
+      await updateDoc(doc(db, 'distributionTrips', tripIdToRevert), {
+        status: 'planned',
+        executedDate: deleteField(),
+        executedQuantities: deleteField()
+      });
+      onNotify('نجاح', 'تم التراجع عن التنفيذ وتمت إعادة الرحلة إلى المخطط');
+      setShowRevertModal(false);
+      setTripIdToRevert(null);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `distributionTrips/${tripIdToRevert}`);
     }
   };
 
@@ -760,6 +844,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 ➕ إضافة رحلة يدوياً
               </button>
               <div className="flex gap-1">
+                <label className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95 cursor-pointer">
+                  {isUploadingActual ? 'جاري الرفع...' : '✅ رفع تقرير التنفيذ الفعلي'}
+                  <input type="file" accept=".xlsx, .xls" onChange={handleActualExecutionUpload} className="hidden" disabled={isUploadingActual} />
+                </label>
                 <label className="px-6 py-2.5 rounded-2xl bg-emerald-500/20 backdrop-blur-md border border-emerald-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-emerald-500/30 transition-all active:scale-95 cursor-pointer">
                   {isUploadingExcel ? 'جاري الرفع...' : '📊 رفع خطة التوزيع'}
                   <input type="file" accept=".xlsx, .xls" onChange={handleExcelUpload} className="hidden" disabled={isUploadingExcel} />
@@ -974,7 +1062,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 <option value="">اختر رحلة للتحكم...</option>
                 {trips.filter(t => showCancelledInControl || t.status !== 'cancelled').map(trip => (
                   <option key={trip.id} value={trip.id}>
-                    رحلة #{trip.tripNumber} ({getDisplayName(trip.pressCode)}) - {trip.destinationCity} {trip.status === 'cancelled' ? '(ملغاة)' : ''}
+                    رحلة #{trip.tripNumber} ({getDisplayName(trip.pressCode)}) - {getDisplayName(trip.centerCode)} {trip.status === 'cancelled' ? '(ملغاة)' : ''}
                   </option>
                 ))}
               </select>
@@ -1088,6 +1176,42 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
       {(isMonitor || isAdmin) && (
         <section className="space-y-4 animate-slideDown">
+          {distributionTrips.length > 0 && (
+            <div className="bg-white p-5 rounded-[2.5rem] shadow-xl border border-slate-100 flex flex-col gap-4">
+               <h3 className="text-sm font-black text-indigo-900 border-b border-slate-100 pb-2">🎯 مؤشرات إنجاز التوزيع</h3>
+               <div className="flex gap-4 items-center">
+                 <div className="flex-1">
+                   <div className="flex justify-between items-center mb-1">
+                     <span className="text-[10px] font-bold text-slate-500">معدل الإنجاز العام</span>
+                     <span className="text-[12px] font-black text-emerald-600">
+                       {Math.round((distributionTrips.filter(t => t.status === 'executed' || t.status === 'dispatched').length / distributionTrips.length) * 100)}%
+                     </span>
+                   </div>
+                   <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                     <div 
+                       className="bg-emerald-500 h-2.5 rounded-full transition-all duration-1000" 
+                       style={{ width: `${Math.round((distributionTrips.filter(t => t.status === 'executed' || t.status === 'dispatched').length / distributionTrips.length) * 100)}%` }}
+                     ></div>
+                   </div>
+                 </div>
+                 <div className="flex gap-3">
+                   <div className="bg-slate-50 px-4 py-2 rounded-2xl text-center border border-slate-100">
+                     <span className="text-sm block font-black text-indigo-900">{distributionTrips.length}</span>
+                     <span className="text-[8px] font-black text-slate-400 uppercase">إجمالي المخطط</span>
+                   </div>
+                   <div className="bg-emerald-50 px-4 py-2 rounded-2xl text-center border border-emerald-100">
+                     <span className="text-sm block font-black text-emerald-600">{distributionTrips.filter(t => t.status === 'executed' || t.status === 'dispatched').length}</span>
+                     <span className="text-[8px] font-black text-emerald-500 uppercase">المنفذ</span>
+                   </div>
+                   <div className="bg-rose-50 px-4 py-2 rounded-2xl text-center border border-rose-100">
+                     <span className="text-sm block font-black text-rose-600">{distributionTrips.filter(t => t.status === 'planned' && t.date < new Date().toISOString().split('T')[0]).length}</span>
+                     <span className="text-[8px] font-black text-rose-500 uppercase">متأخر</span>
+                   </div>
+                 </div>
+               </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between px-2">
             <div className="flex flex-col">
               <h3 className="text-lg font-black text-indigo-900">🏢 المخزون حسب المركز</h3>
@@ -1316,6 +1440,16 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                               }
                               tC += c;
                             });
+                            
+                            // خصم الرحلات المنفذة أو المرسلة فعلياً لكي يظهر الرصيد المتبقي بشكل دقيق
+                            const centerExecutedTrips = distributionTrips.filter(t => t.originCenter === center.code && t.status !== 'planned');
+                            centerExecutedTrips.forEach(et => {
+                              const qt = (et.executedQuantities || et.quantities).find(q => q.palletTypeId === type.id);
+                              if (qt) {
+                                tC -= qt.cartonCount;
+                              }
+                            });
+
                             acc[type.id] = tC;
                             return acc;
                           }, {} as Record<string, number>);
@@ -1389,6 +1523,40 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                       </div>
                     </div>
                   )}
+
+                  {(() => {
+                    const centerExecutedTrips = distributionTrips.filter(t => t.originCenter === center.code && t.status === 'executed');
+                    if (centerExecutedTrips.length === 0) return null;
+                    return (
+                      <div className="space-y-2 pt-2 border-t border-slate-50">
+                        <span className="text-[9px] font-black text-slate-500 uppercase block mr-1">الرحلات المنفذة ({centerExecutedTrips.length}):</span>
+                        <div className="space-y-2">
+                           {centerExecutedTrips.map(trip => (
+                              <div key={trip.id} className="p-3 rounded-2xl border bg-slate-50 border-slate-200 flex flex-col gap-2">
+                                 <div className="flex justify-between items-center">
+                                     <div className="text-right">
+                                       <div className="text-[10px] font-black text-slate-700">رحلة #{trip.tripNumber}</div>
+                                       <div className="text-[8px] font-bold text-slate-500">{trip.destinationCity} • {trip.executedDate}</div>
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                       <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-[7px] font-black uppercase">تم التنفيذ</span>
+                                       {(isAdmin || isMonitor || (role === 'center' && userCenter === center.code)) && (
+                                         <button 
+                                           onClick={() => { setTripIdToRevert(trip.id); setShowRevertModal(true); }} 
+                                           className="p-1 bg-white text-rose-600 rounded-md border border-rose-100 hover:bg-rose-50 transition-all shadow-sm" 
+                                           title="التراجع عن التنفيذ"
+                                         >
+                                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
+                                         </button>
+                                       )}
+                                     </div>
+                                 </div>
+                              </div>
+                           ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="pt-2 border-t border-slate-50">
                   </div>
@@ -1638,6 +1806,17 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         confirmText="نعم، إلغاء الرحلة"
         cancelText="تراجع"
       />
+      <ConfirmModal
+        isOpen={showRevertModal}
+        title="تأكيد التراجع عن التنفيذ"
+        message="هل أنت متأكد من التراجع عن تنفيذ هذه الرحلة؟ سيتم إعادتها إلى قائمة الرحلات المخططة وتعديل رصيد المخزون فوراً."
+        type="danger"
+        onConfirm={handleRevertExecutionConfirm}
+        onCancel={() => { setShowRevertModal(false); setTripIdToRevert(null); }}
+        confirmText="تأكيد التراجع"
+        cancelText="إلغاء"
+      />
     </div>
   );
 };
+

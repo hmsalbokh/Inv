@@ -73,7 +73,13 @@ export interface DistributionTrip {
     cartonCount: number;
     bundleCount: number;
   }[];
-  status: 'planned' | 'dispatched';
+  status: 'planned' | 'dispatched' | 'executed';
+  executedDate?: string;
+  executedQuantities?: {
+    palletTypeId: string;
+    cartonCount: number;
+    bundleCount: number;
+  }[];
 }
 
 export interface SystemLog {

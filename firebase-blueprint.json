@@ -2,22 +2,21 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "User credentials and profile",
+      "description": "System user with role-based access",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "role": { "type": "string", "enum": ["factory", "center", "monitor"] },
-        "code": { "type": "string" },
-        "locationName": { "type": "string" },
         "username": { "type": "string" },
         "password": { "type": "string" },
-        "displayName": { "type": "string" }
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["factory", "center", "monitor", "admin"] },
+        "code": { "type": "string" }
       },
-      "required": ["id", "role", "code", "username", "password", "displayName"]
+      "required": ["id", "username", "role", "code"]
     },
     "PalletType": {
       "title": "Pallet Type",
-      "description": "Definition of a pallet type/stage",
+      "description": "Definition of pallet stages and capacities",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -30,7 +29,7 @@
     },
     "Trip": {
       "title": "Trip",
-      "description": "A supply trip",
+      "description": "Logistical trip involving pallet transport",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -41,109 +40,43 @@
         "startDate": { "type": "number" },
         "status": { "type": "string", "enum": ["active", "completed"] }
       },
-      "required": ["id", "tripNumber", "tripBarcode", "pressCode", "centerCode", "startDate", "status"]
+      "required": ["id", "tripNumber", "tripBarcode", "status"]
     },
-    "InventoryRecord": {
-      "title": "Inventory Record",
-      "description": "A record for a single pallet",
+    "Record": {
+      "title": "Record",
+      "description": "Individual pallet scan record",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "palletTypeId": { "type": "string" },
         "palletBarcode": { "type": "string" },
         "tripId": { "type": "string" },
-        "truckId": { "type": "string" },
         "status": { "type": "string", "enum": ["pending", "in_transit", "received"] },
         "timestamp": { "type": "number" },
-        "factoryTimestamp": { "type": "number" },
-        "centerTimestamp": { "type": "number" },
-        "scannedBy": { "type": "string", "enum": ["factory", "center", "monitor"] },
-        "destination": { "type": "string" },
-        "condition": { "type": "string", "enum": ["intact", "damaged", "external_box_damage", "internal_content_damage", "both"] },
-        "externalDamageQty": { "type": "number" },
-        "internalDamageQty": { "type": "number" },
-        "photos": { "type": "array", "items": { "type": "string" } },
-        "notes": { "type": "string" },
-        "damageDetails": { "type": "string" }
+        "scannedBy": { "type": "string" },
+        "destination": { "type": "string" }
       },
-      "required": ["id", "palletTypeId", "palletBarcode", "tripId", "status", "timestamp", "scannedBy", "destination"]
-    },
-    "SystemConfig": {
-      "title": "System Config",
-      "description": "Global system settings",
-      "type": "object",
-      "properties": {
-        "lastResetTimestamp": { "type": "number" }
-      }
-    },
-    "DistributionTrip": {
-      "title": "Distribution Trip",
-      "description": "A trip from center to city",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "tripNumber": { "type": "string" },
-        "date": { "type": "string" },
-        "originCenter": { "type": "string" },
-        "destinationCity": { "type": "string" },
-        "quantities": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "palletTypeId": { "type": "string" },
-              "cartonCount": { "type": "number" },
-              "bundleCount": { "type": "number" }
-            }
-          }
-        },
-        "status": { "type": "string", "enum": ["planned", "dispatched"] }
-      },
-      "required": ["id", "tripNumber", "date", "originCenter", "destinationCity", "quantities", "status"]
+      "required": ["id", "palletTypeId", "palletBarcode", "tripId", "status", "timestamp", "scannedBy"]
     },
     "SystemLog": {
       "title": "System Log",
-      "description": "A log of errors or system events",
+      "description": "Audit trail for system actions",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "timestamp": { "type": "number" },
-        "type": { "type": "string", "enum": ["login_error", "scan_error", "system_error"] },
         "userId": { "type": "string" },
-        "message": { "type": "string" },
-        "details": { "type": "string" }
-      },
-      "required": ["timestamp", "type", "message", "details"]
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "number" }
+      }
     }
   },
   "firestore": {
-    "users": {
-      "schema": "User",
-      "description": "Collection of users"
-    },
-    "palletTypes": {
-      "schema": "PalletType",
-      "description": "Collection of pallet types"
-    },
-    "trips": {
-      "schema": "Trip",
-      "description": "Collection of trips"
-    },
-    "records": {
-      "schema": "InventoryRecord",
-      "description": "Collection of inventory records"
-    },
-    "config": {
-      "schema": "SystemConfig",
-      "description": "Global configuration"
-    },
-    "distributionTrips": {
-      "schema": "DistributionTrip",
-      "description": "Collection of distribution trips"
-    },
-    "system_logs": {
-      "schema": "SystemLog",
-      "description": "Collection of system logs"
-    }
+    "/users/{userId}": { "schema": "User", "description": "Users" },
+    "/palletTypes/{typeId}": { "schema": "PalletType", "description": "Pallet configurations" },
+    "/trips/{tripId}": { "schema": "Trip", "description": "Trip logs" },
+    "/records/{recordId}": { "schema": "Record", "description": "Scan records" },
+    "/distributionTrips/{tripId}": { "schema": "Trip", "description": "Local distribution logs" },
+    "/system_logs/{logId}": { "schema": "SystemLog", "description": "Audit trail" },
+    "/config/{docId}": { "schema": "object", "description": "System config" }
   }
 }
