@@ -267,6 +267,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         onNotify('خطأ', 'خطأ في معالجة ملف الاكسل. يرجى التأكد من أسماء الأعمدة.');
       } finally {
         setIsUploadingExcel(false);
+        if (e.target) e.target.value = '';
       }
     };
     reader.readAsBinaryString(file);
@@ -292,8 +293,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         data.forEach((row) => {
           const tripNumber = String(row['رقم الرحلة'] || row['tripNumber']);
           
-          // Find if this trip already exists in planned trips
-          const existingTrip = distributionTrips.find(t => t.tripNumber === tripNumber);
+          // Find if this trip already exists in planned or dispatched trips
+          const existingTrip = distributionTrips.find(t => 
+            t.tripNumber === tripNumber && 
+            (t.status === 'planned' || t.status === 'dispatched')
+          );
           
           if (existingTrip) {
             matchCount++;
@@ -332,6 +336,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         onNotify('خطأ', 'حدث خطأ أثناء معالجة ملف التنفيذ الفعلي');
       } finally {
         setIsUploadingActual(false);
+        if (e.target) e.target.value = '';
       }
     };
     reader.readAsBinaryString(file);
@@ -1174,58 +1179,27 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         </section>
       )}
 
-      {(isMonitor || isAdmin) && (
-        <section className="space-y-4 animate-slideDown">
-          {distributionTrips.length > 0 && (
-            <div className="bg-white p-5 rounded-[2.5rem] shadow-xl border border-slate-100 flex flex-col gap-4">
-               <h3 className="text-sm font-black text-indigo-900 border-b border-slate-100 pb-2">🎯 مؤشرات إنجاز التوزيع</h3>
-               <div className="flex gap-4 items-center">
-                 <div className="flex-1">
-                   <div className="flex justify-between items-center mb-1">
-                     <span className="text-[10px] font-bold text-slate-500">معدل الإنجاز العام</span>
-                     <span className="text-[12px] font-black text-emerald-600">
-                       {Math.round((distributionTrips.filter(t => t.status === 'executed' || t.status === 'dispatched').length / distributionTrips.length) * 100)}%
-                     </span>
-                   </div>
-                   <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                     <div 
-                       className="bg-emerald-500 h-2.5 rounded-full transition-all duration-1000" 
-                       style={{ width: `${Math.round((distributionTrips.filter(t => t.status === 'executed' || t.status === 'dispatched').length / distributionTrips.length) * 100)}%` }}
-                     ></div>
-                   </div>
-                 </div>
-                 <div className="flex gap-3">
-                   <div className="bg-slate-50 px-4 py-2 rounded-2xl text-center border border-slate-100">
-                     <span className="text-sm block font-black text-indigo-900">{distributionTrips.length}</span>
-                     <span className="text-[8px] font-black text-slate-400 uppercase">إجمالي المخطط</span>
-                   </div>
-                   <div className="bg-emerald-50 px-4 py-2 rounded-2xl text-center border border-emerald-100">
-                     <span className="text-sm block font-black text-emerald-600">{distributionTrips.filter(t => t.status === 'executed' || t.status === 'dispatched').length}</span>
-                     <span className="text-[8px] font-black text-emerald-500 uppercase">المنفذ</span>
-                   </div>
-                   <div className="bg-rose-50 px-4 py-2 rounded-2xl text-center border border-rose-100">
-                     <span className="text-sm block font-black text-rose-600">{distributionTrips.filter(t => t.status === 'planned' && t.date < new Date().toISOString().split('T')[0]).length}</span>
-                     <span className="text-[8px] font-black text-rose-500 uppercase">متأخر</span>
-                   </div>
-                 </div>
-               </div>
-            </div>
-          )}
-
+      {(role === 'center' || isMonitor || isAdmin) && (
+        <section className="space-y-6 animate-slideDown">
           <div className="flex items-center justify-between px-2">
-            <div className="flex flex-col">
-              <h3 className="text-lg font-black text-indigo-900">🏢 المخزون حسب المركز</h3>
-              <span className="text-[10px] font-bold text-slate-400">إجمالي المراكز: {centerOptions.length}</span>
-            </div>
-            <button 
-              onClick={handleExportCenterInventory}
-              className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-sm"
-            >
-              📊 تصدير تقرير المخزون (Excel)
-            </button>
+             <h3 className="text-lg font-black text-indigo-900 px-2">🏢 مراكز الخدمات اللوجستية</h3>
+             {isAdmin && (
+               <button 
+                 onClick={handleExportCenterInventory}
+                 className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-sm"
+               >
+                 📊 تصدير البيانات (Excel)
+               </button>
+             )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {centerOptions.map(center => {
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {centerOptions
+              .filter(center => {
+                if (isAdmin || isMonitor) return true;
+                return center.code === userCenter;
+              })
+              .map(center => {
               const centerRecords = statsRecords.filter(r => r.destination === center.code);
               const receivedRecords = centerRecords.filter(r => r.status === 'received');
               
@@ -1264,7 +1238,25 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 }
               });
 
-              const centerPlannedTrips = distributionTrips.filter(t => t.originCenter === center.code && t.status === 'planned');
+              let exportedCartons = 0;
+              const centerExecutedTripsForCalc = distributionTrips.filter(t => 
+                t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                (t.status === 'executed' || t.status === 'dispatched')
+              );
+              centerExecutedTripsForCalc.forEach(et => {
+                const qtList = et.executedQuantities || et.quantities;
+                qtList.forEach(q => {
+                  exportedCartons += q.cartonCount;
+                });
+              });
+              const remainingBalance = centerCartons - exportedCartons;
+
+              const centerPlannedTrips = distributionTrips
+                .filter(t => 
+                  t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                  t.status === 'planned'
+                )
+                .sort((a, b) => a.date.localeCompare(b.date)); // الأقدم أولاً للمخطط
 
               return (
                 <div key={center.id} className="bg-white p-5 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4 relative overflow-hidden group hover:border-emerald-200 transition-all">
@@ -1301,124 +1293,37 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     </div>
                   </div>
                   
-                  <div className={`grid ${centerEmptyCartons > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-indigo-50 border border-indigo-100 p-2 rounded-2xl text-center flex flex-col justify-center">
+                      <span className="text-[8px] font-black text-indigo-400 uppercase block">تم التصدير (خروج)</span>
+                      <span className="text-sm font-black text-indigo-900">{exportedCartons.toLocaleString()} كرتون</span>
+                    </div>
+                    <div className={`${remainingBalance <= 0 ? 'bg-slate-50 border-slate-200' : 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-100'} p-2 rounded-2xl text-center flex flex-col justify-center transition-all`}>
+                      <span className={`text-[8px] font-black uppercase block ${remainingBalance <= 0 ? 'text-slate-400' : 'text-emerald-100'}`}>الرصيد المتبقي الحر</span>
+                      <span className={`text-sm font-black ${remainingBalance <= 0 ? 'text-slate-400' : 'text-white'}`}>{remainingBalance.toLocaleString()} كرتون</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
                     <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center">
-                      <span className="text-[8px] font-black text-slate-400 uppercase block">الكتب (كراتين)</span>
-                      <span className="text-sm font-black text-indigo-900">{centerCartons.toLocaleString()}</span>
+                      <span className="text-[8px] font-black text-slate-400 uppercase block">إجمالي المستلم</span>
+                      <span className="text-xs font-bold text-slate-600">{centerCartons.toLocaleString()} ك</span>
                     </div>
                     <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center">
-                      <span className="text-[8px] font-black text-slate-400 uppercase block">الحزم</span>
-                      <span className="text-sm font-black text-emerald-700">{centerBundles.toLocaleString()}</span>
+                      <span className="text-[8px] font-black text-slate-400 uppercase block">إجمالي الحزم</span>
+                      <span className="text-xs font-bold text-slate-600">{centerBundles.toLocaleString()} ح</span>
                     </div>
-                    {centerEmptyCartons > 0 && (
-                      <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center border border-emerald-100 bg-emerald-50/50">
-                        <span className="text-[8px] font-black text-emerald-500 uppercase block">كراتين فارغة</span>
-                        <span className="text-sm font-black text-emerald-700">+{centerEmptyCartons.toLocaleString()}</span>
-                      </div>
-                    )}
                   </div>
 
                   <div className="space-y-2 pt-2 border-t border-slate-50">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[9px] font-black text-slate-400 uppercase block mr-1">تفاصيل المراحل والمخزون المتبقي:</span>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-[9px] font-black text-indigo-600 uppercase block mr-1">🚚 رحلات التوزيع المخططة:</span>
                     </div>
-                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
-                      {palletTypes.map(type => {
-                        const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
-                        const plannedQty = stats.plannedOutbound[center.code]?.[type.id] || 0;
-                        if (typeInCenter.length === 0 && plannedQty === 0) return null;
-                        
-                        let typeCartons = 0;
-                        let typeBundles = 0;
-                        let stageDiffCartons = 0;
-                        let stageDiffBundles = 0;
-
-                        typeInCenter.forEach(r => {
-                          let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
-                          let b = c * type.bundlesPerCarton;
-
-                          if (r.extraCartons) {
-                            c += r.extraCartons;
-                            b += r.extraCartons * type.bundlesPerCarton;
-                            stageDiffCartons += r.extraCartons;
-                            stageDiffBundles += r.extraCartons * type.bundlesPerCarton;
-                          }
-                          if (r.missingCartons) {
-                            c -= r.missingCartons;
-                            b -= r.missingCartons * type.bundlesPerCarton;
-                            stageDiffCartons -= r.missingCartons;
-                            stageDiffBundles -= r.missingCartons * type.bundlesPerCarton;
-                          }
-
-                          if (r.hasDiscrepancy) {
-                            const sign = r.discrepancyType === 'excess' ? 1 : -1;
-                            const diffC = r.discrepancyCartonsQty || 0;
-                            const diffB = r.discrepancyBundlesQty || 0;
-                            
-                            stageDiffCartons += (sign * diffC);
-                            stageDiffBundles += (sign * diffB);
-
-                            c += sign * diffC;
-                            b += sign * ((diffC * type.bundlesPerCarton) + diffB);
-                          }
-                          typeCartons += c;
-                          typeBundles += b;
-                        });
-
-                        const remaining = typeCartons - plannedQty;
-                        const remainingBundles = remaining * type.bundlesPerCarton; // approximate since we mix carton/bundle shortages, but good enough for UI
-                        const isShortage = remaining < 0;
-
-                        return (
-                          <div key={type.id} className={`flex flex-col gap-1 p-2 rounded-lg border ${isShortage ? 'bg-rose-50 border-rose-100' : 'bg-slate-50/50 border-slate-100/50'}`}>
-                            <div className="flex justify-between items-start">
-                              <div className="flex flex-col">
-                                <span className="text-[9px] font-bold text-slate-600 truncate max-w-[100px]">{type.stageName}</span>
-                                {(stageDiffCartons !== 0 || stageDiffBundles !== 0) && (
-                                  <div className="flex gap-1 mt-1">
-                                    {stageDiffCartons !== 0 && (
-                                      <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded-md ${stageDiffCartons > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                        {stageDiffCartons > 0 ? '+' : '-'}{Math.abs(stageDiffCartons)} كرتون
-                                      </span>
-                                    )}
-                                    {stageDiffBundles !== 0 && (
-                                      <span className={`text-[7px] font-bold px-1.5 py-0.5 rounded-md ${stageDiffBundles > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                        {stageDiffBundles > 0 ? '+' : '-'}{Math.abs(stageDiffBundles)} حزمة
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-[9px] font-black text-indigo-600">{typeCartons} ك</span>
-                                <span className="text-[9px] font-black text-emerald-600">{typeBundles} ح</span>
-                                <span className="text-[8px] font-bold text-slate-400 bg-white px-1.5 py-0.5 rounded-md border border-slate-100">{typeInCenter.length} ط</span>
-                              </div>
-                            </div>
-                            {plannedQty > 0 && (
-                              <div className="flex justify-between items-center pt-1 border-t border-slate-100/50">
-                                <span className="text-[8px] font-bold text-amber-600">مخطط صرفه: {plannedQty}</span>
-                                <div className="flex flex-col items-end">
-                                  <span className={`text-[8px] font-black ${isShortage ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                    {isShortage ? `عجز: ${Math.abs(remaining)}` : `المتبقي: ${remaining}`}
-                                  </span>
-                                  {!isShortage && (
-                                    <span className="text-[7px] font-bold text-emerald-500">
-                                      (~{remainingBundles} حزمة)
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {centerPlannedTrips.length > 0 && (
-                    <div className="space-y-2 pt-2 border-t border-slate-50">
-                      <span className="text-[9px] font-black text-indigo-600 uppercase block mr-1">الرحلات المخططة ({centerPlannedTrips.length}):</span>
+                    {centerPlannedTrips.length === 0 ? (
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-center">
+                        <p className="text-[8px] font-bold text-slate-400">لا توجد رحلات مجدولة حالياً</p>
+                      </div>
+                    ) : (
                       <div className="space-y-2">
                         {(() => {
                           const currentStock = palletTypes.reduce((acc, type) => {
@@ -1442,7 +1347,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                             });
                             
                             // خصم الرحلات المنفذة أو المرسلة فعلياً لكي يظهر الرصيد المتبقي بشكل دقيق
-                            const centerExecutedTrips = distributionTrips.filter(t => t.originCenter === center.code && t.status !== 'planned');
+                            const centerExecutedTrips = distributionTrips.filter(t => 
+                              t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                              t.status !== 'planned'
+                            );
                             centerExecutedTrips.forEach(et => {
                               const qt = (et.executedQuantities || et.quantities).find(q => q.palletTypeId === type.id);
                               if (qt) {
@@ -1489,9 +1397,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                       </div>
                                     )}
                                     {hasShortage ? (
-                                      <span className="bg-rose-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase">عجز في المخزون</span>
+                                      <span className="bg-rose-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase">عجز</span>
                                     ) : (
-                                      <span className="bg-emerald-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase">مخزون كافٍ</span>
+                                      <span className="bg-emerald-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase">متاح</span>
                                     )}
                                     {(role === 'center' && userCenter === center.code) && (
                                       <button 
@@ -1506,11 +1414,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                 </div>
                                 {hasShortage && (
                                   <div className="bg-white/50 p-2 rounded-xl border border-rose-100">
-                                    <div className="text-[8px] font-black text-rose-600 mb-1">تفاصيل العجز:</div>
                                     <div className="flex flex-wrap gap-1">
                                       {tripDeficits.map((d, i) => (
                                         <span key={i} className="bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-md text-[7px] font-bold">
-                                          {d.stageName}: {d.deficit} كرتون
+                                          {d.stageName}: {d.deficit} ك
                                         </span>
                                       ))}
                                     </div>
@@ -1521,26 +1428,43 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                           });
                         })()}
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
 
-                  {(() => {
-                    const centerExecutedTrips = distributionTrips.filter(t => t.originCenter === center.code && t.status === 'executed');
-                    if (centerExecutedTrips.length === 0) return null;
-                    return (
-                      <div className="space-y-2 pt-2 border-t border-slate-50">
-                        <span className="text-[9px] font-black text-slate-500 uppercase block mr-1">الرحلات المنفذة ({centerExecutedTrips.length}):</span>
+                  <div className="space-y-2 pt-4 border-t border-slate-100">
+                    <span className="text-[9px] font-black text-slate-500 uppercase block mr-1">✅ تم تنفيذه وشحنه:</span>
+                    {(() => {
+                      const centerExecutedTrips = distributionTrips
+                        .filter(t => 
+                          t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                          (t.status === 'executed' || t.status === 'dispatched')
+                        )
+                        .sort((a, b) => {
+                          const dateA = a.executedDate || a.date;
+                          const dateB = b.executedDate || b.date;
+                          return dateB.localeCompare(dateA); // الأحدث أولاً
+                        });
+                      
+                      if (centerExecutedTrips.length === 0) return (
+                        <div className="p-3 bg-slate-50/50 rounded-2xl border border-dashed border-slate-100 text-center">
+                           <p className="text-[8px] font-bold text-slate-300">لا توجد رحلات منفذة بعد</p>
+                        </div>
+                      );
+
+                      return (
                         <div className="space-y-2">
                            {centerExecutedTrips.map(trip => (
                               <div key={trip.id} className="p-3 rounded-2xl border bg-slate-50 border-slate-200 flex flex-col gap-2">
                                  <div className="flex justify-between items-center">
                                      <div className="text-right">
                                        <div className="text-[10px] font-black text-slate-700">رحلة #{trip.tripNumber}</div>
-                                       <div className="text-[8px] font-bold text-slate-500">{trip.destinationCity} • {trip.executedDate}</div>
+                                       <div className="text-[8px] font-bold text-slate-500">{trip.destinationCity} • {trip.executedDate || trip.date}</div>
                                      </div>
                                      <div className="flex items-center gap-2">
-                                       <span className="bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-[7px] font-black uppercase">تم التنفيذ</span>
-                                       {(isAdmin || isMonitor || (role === 'center' && userCenter === center.code)) && (
+                                       <span className={`px-2 py-0.5 rounded-full text-[7px] font-black uppercase ${trip.status === 'executed' ? 'bg-slate-200 text-slate-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                                         {trip.status === 'executed' ? 'منفذ' : 'جاري الشحن'}
+                                       </span>
+                                       {(isAdmin || isMonitor || (role === 'center' && userCenter === center.code)) && trip.status === 'executed' && (
                                          <button 
                                            onClick={() => { setTripIdToRevert(trip.id); setShowRevertModal(true); }} 
                                            className="p-1 bg-white text-rose-600 rounded-md border border-rose-100 hover:bg-rose-50 transition-all shadow-sm" 
@@ -1551,67 +1475,86 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                        )}
                                      </div>
                                  </div>
+                                 
+                                 {/* تفاصيل الاختلاف بين المخطط والمنفذ */}
+                                 {trip.executedQuantities && trip.executedQuantities.length > 0 && (
+                                   <div className="pt-2 border-t border-slate-100 mt-1">
+                                      <div className="flex flex-wrap gap-1">
+                                         {palletTypes.map(type => {
+                                           const plannedObj = trip.quantities.find(q => q.palletTypeId === type.id);
+                                           const executedObj = trip.executedQuantities?.find(q => q.palletTypeId === type.id);
+                                           const planned = plannedObj?.cartonCount || 0;
+                                           const executed = executedObj?.cartonCount || 0;
+                                           const diff = executed - planned;
+                                           if (planned === 0 && executed === 0) return null;
+                                           return (
+                                             <div key={type.id} className="flex flex-col bg-white/40 p-1.5 rounded-xl border border-slate-100 min-w-[70px]">
+                                               <span className="text-[7px] font-black text-slate-400 uppercase truncate text-right">{type.stageName}</span>
+                                               <div className="flex items-center justify-between gap-1">
+                                                 <span className="text-[9px] font-black text-slate-700">{executed} ك</span>
+                                                 {diff !== 0 && (
+                                                   <span className={`text-[8px] font-bold px-1 rounded ${diff > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                                     {diff > 0 ? '▲' : '▼'}{Math.abs(diff)}
+                                                   </span>
+                                                 )}
+                                               </div>
+                                             </div>
+                                           );
+                                         })}
+                                      </div>
+                                   </div>
+                                 )}
                               </div>
                            ))}
                         </div>
-                      </div>
-                    );
-                  })()}
-
-                  <div className="pt-2 border-t border-slate-50">
+                      );
+                    })()}
                   </div>
                 </div>
               );
             })}
           </div>
-        </section>
-      )}
 
-      {(role === 'center' || isMonitor || isAdmin) && (
-        <section className="space-y-8 animate-slideDown">
-          {/* قسم التعليم العام */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between px-4 border-r-4 border-indigo-600">
-              <h3 className="text-lg font-black text-indigo-900">📚 مخزون التعليم العام (G)</h3>
-              <span className="text-[10px] font-bold text-slate-400">
-                {palletTypes.filter(t => t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).length} مرحلة
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {palletTypes.filter(t => t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).map(type => (
-                <StageCard key={type.id} type={type} statsRecords={statsRecords} />
-              ))}
+          <div className="pt-8 border-t border-slate-100">
+            <h3 className="text-lg font-black text-indigo-900 mb-6 px-2">📚 تفاصيل المخزون التفصيلية</h3>
+            <div className="space-y-8">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-4 border-r-4 border-indigo-600">
+                  <h3 className="text-md font-black text-indigo-900">التعليم العام (G)</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {palletTypes.filter(t => t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).map(type => (
+                    <StageCard key={type.id} type={type} statsRecords={statsRecords} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between px-4 border-r-4 border-emerald-600">
+                  <h3 className="text-md font-black text-emerald-900">المدارس العالمية (IG)</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {palletTypes.filter(t => t.stageCode.startsWith('IG')).map(type => (
+                    <StageCard key={type.id} type={type} statsRecords={statsRecords} />
+                  ))}
+                </div>
+              </div>
+
+              {/* أي مراحل أخرى غير مصنفة */}
+              {palletTypes.filter(t => !t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between px-4 border-r-4 border-slate-400">
+                    <h3 className="text-md font-black text-slate-700">📦 مراحل أخرى</h3>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {palletTypes.filter(t => !t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).map(type => (
+                      <StageCard key={type.id} type={type} statsRecords={statsRecords} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-
-          {/* قسم المدارس العالمية */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between px-4 border-r-4 border-emerald-600">
-              <h3 className="text-lg font-black text-emerald-900">🌍 مخزون المدارس العالمية (IG)</h3>
-              <span className="text-[10px] font-bold text-slate-400">
-                {palletTypes.filter(t => t.stageCode.startsWith('IG')).length} مرحلة
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {palletTypes.filter(t => t.stageCode.startsWith('IG')).map(type => (
-                <StageCard key={type.id} type={type} statsRecords={statsRecords} />
-              ))}
-            </div>
-          </div>
-
-          {/* أي مراحل أخرى غير مصنفة */}
-          {palletTypes.filter(t => !t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between px-4 border-r-4 border-slate-400">
-                <h3 className="text-lg font-black text-slate-700">📦 مراحل أخرى</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {palletTypes.filter(t => !t.stageCode.startsWith('G') && !t.stageCode.startsWith('IG')).map(type => (
-                  <StageCard key={type.id} type={type} statsRecords={statsRecords} />
-                ))}
-              </div>
-            </div>
-          )}
         </section>
       )}
 
