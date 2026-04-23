@@ -64,10 +64,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -76,74 +72,8 @@ service cloud.firestore {
       return isAuthenticated() &&
         ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-         (request.auth.token.email == "m0931700446@gmail.com" && request.auth.token.email_verified == true) ||
-         (request.auth.token.firebase.sign_in_provider == 'anonymous') ||
-         (request.auth.token.firebase.sign_in_provider == 'google.com')); 
+         (request.auth.token.email == "m0931700446@gmail.com" && request.auth.token.email_verified == true)); 
     }
-
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    function hasRequiredFields(fields) {
-      return request.resource.data.keys().hasAll(fields);
-    }
-
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
-    }
-
-    function isValidRole(role) {
-      return role in ['factory', 'center', 'monitor', 'admin'];
-    }
-
-    function isValidStatus(status) {
-      return status in ['pending', 'in_transit', 'received'];
-    }
-
-    function isValidTripStatus(status) {
-      return status in ['active', 'completed'];
-    }
-
-    // ===============================================================
-    // Domain Validators
-    // ===============================================================
-
-    function isValidUser(data) {
-      return data.id is string && data.id.size() > 0 &&
-             data.role is string && isValidRole(data.role) &&
-             data.code is string && data.code.size() > 0 &&
-             data.username is string && data.username.size() > 0 &&
-             data.displayName is string && data.displayName.size() > 0 &&
-             (!('locationName' in data) || data.locationName is string);
-    }
-
-    function isValidPalletType(data) {
-      return data.id is string && data.stageCode is string &&
-             data.stageName is string && data.stageName.size() < 100 &&
-             data.cartonsPerPallet is number && data.bundlesPerCarton is number;
-    }
-
-    function isValidTrip(data) {
-      return data.id is string && data.tripNumber is string &&
-             data.tripBarcode is string && data.pressCode is string &&
-             data.centerCode is string && data.startDate is number &&
-             data.status is string && isValidTripStatus(data.status);
-    }
-
-    function isValidRecord(data) {
-      return data.id is string && data.palletTypeId is string &&
-             data.palletBarcode is string && data.tripId is string &&
-             data.status is string && isValidStatus(data.status) &&
-             data.timestamp is number && data.scannedBy is string &&
-             data.destination is string &&
-             (!('photos' in data) || data.photos is list) &&
-             (!('notes' in data) || (data.notes is string && data.notes.size() < 1000));
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
 
     match /users/{userId} {
       allow read: if true;
@@ -176,7 +106,7 @@ service cloud.firestore {
     }
 
     match /system_logs/{logId} {
-      allow read: if true; // In reality this should be isAdmin() but the current setup uses client side filtering.
+      allow read: if true;
       allow write: if true;
     }
 

@@ -14,10 +14,11 @@ interface Props {
   onDelete: (id: string) => void;
   onResetData: () => Promise<void>;
   onResetStages: () => Promise<void>;
+  onMigrateData: () => Promise<void>;
   onNotify: (title: string, msg: string) => void;
 }
 
-export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, onUpdate, onAdd, onDelete, onResetData, onResetStages, onNotify }) => {
+export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, onUpdate, onAdd, onDelete, onResetData, onResetStages, onMigrateData, onNotify }) => {
   const [tab, setTab] = useState<'stages' | 'users' | 'logs'>('users');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showResetStagesConfirm, setShowResetStagesConfirm] = useState(false);
@@ -114,7 +115,7 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
         <button onClick={() => setTab('logs')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'logs' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>🚨 سجل الأخطاء</button>
       </div>
 
-      <div className="px-4">
+      <div className="px-4 space-y-2">
         <button onClick={() => setShowResetConfirm(true)} className="w-full bg-rose-50 text-rose-600 p-4 rounded-2xl border border-rose-100 font-black text-xs active:scale-95 transition-all mb-4">🗑️ تصفير كافة البيانات السحابية</button>
       </div>
 
