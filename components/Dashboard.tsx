@@ -18,7 +18,7 @@ interface Props {
   userCenter: CenterCode | null;
   users: UserCredentials[];
   onSelectCenter: (center: CenterCode) => void;
-  onNewTrip: (press: PressCode, center: CenterCode, selections: { typeId: string, count: number }[], semester: string, year: string) => void;
+  onNewTrip: (press: PressCode, center: CenterCode, selections: { typeId: string, pallets: number, extraCartons: number, missingCartons: number }[], semester: string, year: string) => void;
   onNotify: (title: string, msg: string) => void;
 }
 
@@ -48,6 +48,34 @@ const generateUUID = () => {
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
+};
+
+const formatExcelDate = (val: any): string => {
+  if (!val) return new Date().toISOString().split('T')[0];
+  
+  if (val instanceof Date) {
+    return val.toISOString().split('T')[0];
+  }
+  
+  if (typeof val === 'number') {
+    // Excel dates are numbers representing days since 1900-01-01
+    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return date.toISOString().split('T')[0];
+  }
+  
+  const str = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    try {
+      return d.toISOString().split('T')[0];
+    } catch (e) {
+      return str;
+    }
+  }
+  
+  return str || new Date().toISOString().split('T')[0];
 };
 
 const StageCard: React.FC<{ type: PalletType, statsRecords: InventoryRecord[] }> = ({ type, statsRecords }) => {
@@ -161,6 +189,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [showCancelledInControl, setShowCancelledInControl] = useState(false);
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [tripIdToRevert, setTripIdToRevert] = useState<string | null>(null);
+  const [showDeleteDistModal, setShowDeleteDistModal] = useState(false);
+  const [tripIdToDeleteDist, setTripIdToDeleteDist] = useState<string | null>(null);
+  const [showEmptyCartonsModal, setShowEmptyCartonsModal] = useState(false);
+  const [selectedCenterForEmpty, setSelectedCenterForEmpty] = useState<{
+    name: string;
+    items: { stageName: string; cartons: number }[];
+  } | null>(null);
 
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
@@ -198,7 +233,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     XLSX.writeFile(wb, "Distribution_Plan_Template.xlsx");
   };
 
-  const isAdmin = useMemo(() => userCode === 'ADMIN', [userCode]);
+  const isAdmin = useMemo(() => userCode === 'ADMIN' || (role as string) === 'monitor' || (role as string) === 'admin', [userCode, role]);
 
   const statsRecords = useMemo(() => {
     const baseRecords = records.filter(r => r.status !== 'cancelled');
@@ -225,39 +260,63 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     reader.onload = async (evt) => {
       try {
         const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
         const batch = writeBatch(db);
-        data.forEach((row) => {
-          const id = generateUUID();
-          const trip: DistributionTrip = {
-            id,
-            tripNumber: String(row['رقم الرحلة'] || row['tripNumber']),
-            date: String(row['تاريخ الرحلة'] || row['date']),
-            originCenter: String(row['نقطة الانطلاق'] || row['originCenter']),
-            destinationCity: String(row['الوجهة'] || row['destinationCity']),
-            status: 'planned',
-            quantities: palletTypes.map(type => {
-              const cartons = Number(row[type.stageCode] || 0);
-              const extraBundles = Number(row[`${type.stageCode}L`] || 0);
-              const bPerC = type.bundlesPerCarton || 1;
-              
-              // إجمالي الحزم = (الكراتين * السعة) + الحزم الإضافية
-              const totalBundles = (cartons * bPerC) + extraBundles;
-              // عدد الكراتين النهائي (جبر الكسر للأعلى)
-              const finalCartonCount = Math.ceil(totalBundles / bPerC);
+        const processedNumbers = new Set<string>();
 
-              return {
-                palletTypeId: type.id,
-                cartonCount: finalCartonCount,
-                bundleCount: totalBundles
-              };
-            }).filter(q => q.bundleCount > 0)
-          };
-          batch.set(doc(db, 'distributionTrips', id), trip);
+        data.forEach((row) => {
+          const rawTripNumber = row['رقم الرحلة'] || row['tripNumber'];
+          if (!rawTripNumber) return;
+          
+          const tripNumber = String(rawTripNumber).trim();
+          if (processedNumbers.has(tripNumber)) return;
+          processedNumbers.add(tripNumber);
+          
+          // البحث عن رحلة موجودة بنفس الرقم ولا زالت في حالة التخطيط
+          const existingTrip = distributionTrips.find(t => 
+            t.tripNumber.trim() === tripNumber && t.status === 'planned'
+          );
+
+          const quantities = palletTypes.map(type => {
+            const cartons = Number(row[type.stageCode] || 0);
+            const extraBundles = Number(row[`${type.stageCode}L`] || 0);
+            const bPerC = type.bundlesPerCarton || 1;
+            const totalBundles = (cartons * bPerC) + extraBundles;
+            const finalCartonCount = Math.ceil(totalBundles / bPerC);
+
+            return {
+              palletTypeId: type.id,
+              cartonCount: finalCartonCount,
+              bundleCount: totalBundles
+            };
+          }).filter(q => q.bundleCount > 0);
+
+          const tripDate = formatExcelDate(row['تاريخ الرحلة'] || row['date']);
+
+          if (existingTrip) {
+            batch.update(doc(db, 'distributionTrips', existingTrip.id), {
+              date: tripDate,
+              originCenter: String(row['نقطة الانطلاق'] || row['originCenter'] || ''),
+              destinationCity: String(row['الوجهة'] || row['destinationCity'] || ''),
+              quantities
+            });
+          } else {
+            const id = generateUUID();
+            const trip: DistributionTrip = {
+              id,
+              tripNumber,
+              date: tripDate,
+              originCenter: String(row['نقطة الانطلاق'] || row['originCenter'] || ''),
+              destinationCity: String(row['الوجهة'] || row['destinationCity'] || ''),
+              status: 'planned',
+              quantities
+            };
+            batch.set(doc(db, 'distributionTrips', id), trip);
+          }
         });
 
         await batch.commit();
@@ -282,7 +341,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     reader.onload = async (evt) => {
       try {
         const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
@@ -291,17 +350,18 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         let matchCount = 0;
 
         data.forEach((row) => {
-          const tripNumber = String(row['رقم الرحلة'] || row['tripNumber']);
+          const tripNumber = String(row['رقم الرحلة'] || row['tripNumber'] || '').trim();
+          if (!tripNumber) return;
           
           // Find if this trip already exists in planned or dispatched trips
           const existingTrip = distributionTrips.find(t => 
-            t.tripNumber === tripNumber && 
+            t.tripNumber.trim() === tripNumber && 
             (t.status === 'planned' || t.status === 'dispatched')
           );
           
           if (existingTrip) {
             matchCount++;
-            const executedDate = String(row['تاريخ التنفيذ'] || row['تاريخ الرحلة'] || row['date'] || new Date().toISOString().split('T')[0]);
+            const executedDate = formatExcelDate(row['تاريخ التنفيذ'] || row['تاريخ الرحلة'] || row['date']);
             
             const executedQuantities = palletTypes.map(type => {
               const cartons = Number(row[type.stageCode] || 0);
@@ -351,13 +411,20 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     }
   };
 
-  const handleDeleteDistTrip = async (tripId: string) => {
-    if (!window.confirm('هل أنت متأكد من رغبتك في حذف هذه الرحلة المخططة؟')) return;
+  const handleDeleteDistTrip = (tripId: string) => {
+    setTripIdToDeleteDist(tripId);
+    setShowDeleteDistModal(true);
+  };
+
+  const confirmDeleteDistTrip = async () => {
+    if (!tripIdToDeleteDist) return;
     try {
-      await deleteDoc(doc(db, 'distributionTrips', tripId));
+      await deleteDoc(doc(db, 'distributionTrips', tripIdToDeleteDist));
       onNotify('نجاح', 'تم حذف رحلة التوزيع بنجاح');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, `distributionTrips/${tripId}`);
+      setShowDeleteDistModal(false);
+      setTripIdToDeleteDist(null);
+    } catch (e: any) {
+      handleFirestoreError(e, OperationType.DELETE, `distributionTrips/${tripIdToDeleteDist}`);
     }
   };
 
@@ -378,6 +445,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   };
 
   const handleEditDistTrip = (trip: DistributionTrip) => {
+    if (!isAdmin) return;
     const quantitiesMap: Record<string, { cartons: number, bundles: number }> = {};
     trip.quantities.forEach(q => {
       const type = palletTypes.find(t => t.id === q.palletTypeId);
@@ -1206,6 +1274,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               let centerCartons = 0;
               let centerBundles = 0;
               let centerEmptyCartons = 0;
+              const emptyBreakdownMap: Record<string, number> = {};
+
               receivedRecords.forEach(r => {
                 const type = palletTypes.find(t => t.id === r.palletTypeId);
                 if (type) {
@@ -1231,6 +1301,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   
                   if (type.stageCode.toUpperCase().startsWith('F')) {
                     centerEmptyCartons += c;
+                    emptyBreakdownMap[type.stageName] = (emptyBreakdownMap[type.stageName] || 0) + c;
                   } else {
                     centerCartons += c;
                     centerBundles += b;
@@ -1238,7 +1309,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 }
               });
 
-              let exportedCartons = 0;
+              let exportedBookCartons = 0;
+              let exportedEmptyCartons = 0;
               const centerExecutedTripsForCalc = distributionTrips.filter(t => 
                 t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
                 (t.status === 'executed' || t.status === 'dispatched')
@@ -1246,10 +1318,20 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               centerExecutedTripsForCalc.forEach(et => {
                 const qtList = et.executedQuantities || et.quantities;
                 qtList.forEach(q => {
-                  exportedCartons += q.cartonCount;
+                  const type = palletTypes.find(t => t.id === q.palletTypeId);
+                  if (type) {
+                    if (type.stageCode.toUpperCase().startsWith('F')) {
+                      exportedEmptyCartons += q.cartonCount;
+                      emptyBreakdownMap[type.stageName] = (emptyBreakdownMap[type.stageName] || 0) - q.cartonCount;
+                    } else {
+                      exportedBookCartons += q.cartonCount;
+                    }
+                  }
                 });
               });
-              const remainingBalance = centerCartons - exportedCartons;
+              
+              const remainingBookBalance = centerCartons - exportedBookCartons;
+              const remainingEmptyBalance = centerEmptyCartons - exportedEmptyCartons;
 
               const centerPlannedTrips = distributionTrips
                 .filter(t => 
@@ -1296,11 +1378,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   <div className="grid grid-cols-2 gap-2">
                     <div className="bg-indigo-50 border border-indigo-100 p-2 rounded-2xl text-center flex flex-col justify-center">
                       <span className="text-[8px] font-black text-indigo-400 uppercase block">تم التصدير (خروج)</span>
-                      <span className="text-sm font-black text-indigo-900">{exportedCartons.toLocaleString()} كرتون</span>
+                      <span className="text-sm font-black text-indigo-900">{exportedBookCartons.toLocaleString()} كرتون</span>
                     </div>
-                    <div className={`${remainingBalance <= 0 ? 'bg-slate-50 border-slate-200' : 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-100'} p-2 rounded-2xl text-center flex flex-col justify-center transition-all`}>
-                      <span className={`text-[8px] font-black uppercase block ${remainingBalance <= 0 ? 'text-slate-400' : 'text-emerald-100'}`}>الرصيد المتبقي الحر</span>
-                      <span className={`text-sm font-black ${remainingBalance <= 0 ? 'text-slate-400' : 'text-white'}`}>{remainingBalance.toLocaleString()} كرتون</span>
+                    <div className={`${remainingBookBalance <= 0 ? 'bg-slate-50 border-slate-200' : 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-100'} p-2 rounded-2xl text-center flex flex-col justify-center transition-all`}>
+                      <span className={`text-[8px] font-black uppercase block ${remainingBookBalance <= 0 ? 'text-slate-400' : 'text-emerald-100'}`}>الرصيد المتبقي الحر</span>
+                      <span className={`text-sm font-black ${remainingBookBalance <= 0 ? 'text-slate-400' : 'text-white'}`}>{remainingBookBalance.toLocaleString()} كرتون</span>
                     </div>
                   </div>
 
@@ -1314,6 +1396,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                       <span className="text-xs font-bold text-slate-600">{centerBundles.toLocaleString()} ح</span>
                     </div>
                   </div>
+
+                  {remainingEmptyBalance > 0 && (
+                    <div 
+                      onClick={() => {
+                        setSelectedCenterForEmpty({
+                          name: center.displayName,
+                          items: Object.entries(emptyBreakdownMap).map(([stageName, cartons]) => ({ stageName, cartons }))
+                        });
+                        setShowEmptyCartonsModal(true);
+                      }}
+                      className="cursor-pointer hover:bg-emerald-100 transition-colors bg-emerald-50 p-2 rounded-xl text-center flex flex-col justify-center border border-emerald-100 mt-2 shadow-sm"
+                    >
+                      <span className="text-[8px] font-black text-emerald-500 uppercase block">كراتين فارغة إضافية (اضغط للتفاصيل)</span>
+                      <span className="text-sm font-black text-emerald-700">+{remainingEmptyBalance.toLocaleString()} كرتون</span>
+                    </div>
+                  )}
 
                   <div className="space-y-2 pt-2 border-t border-slate-50">
                     <div className="flex justify-between items-center mb-1">
@@ -1392,11 +1490,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                   <div className="flex items-center gap-2">
                                     {isAdmin && (
                                       <div className="flex items-center gap-1 ml-2">
-                                        <button onClick={() => handleEditDistTrip(trip)} className="p-1.5 bg-white/50 text-slate-600 rounded-lg hover:bg-indigo-100 hover:text-indigo-600 transition-all border border-slate-100" title="تعديل">
-                                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                        <button onClick={(e) => { e.stopPropagation(); handleEditDistTrip(trip); }} className="p-2 bg-white/50 text-slate-600 rounded-lg hover:bg-indigo-100 hover:text-indigo-600 transition-all border border-slate-100 active:scale-90" title="تعديل">
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                         </button>
-                                        <button onClick={() => handleDeleteDistTrip(trip.id)} className="p-1.5 bg-white/50 text-slate-600 rounded-lg hover:bg-rose-100 hover:text-rose-600 transition-all border border-slate-100" title="حذف">
-                                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteDistTrip(trip.id); }} className="p-2 bg-white/50 text-slate-600 rounded-lg hover:bg-rose-100 hover:text-rose-600 transition-all border border-slate-100 active:scale-90" title="حذف">
+                                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                         </button>
                                       </div>
                                     )}
@@ -1763,6 +1861,53 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         confirmText="تأكيد التراجع"
         cancelText="إلغاء"
       />
+
+      <ConfirmModal
+        isOpen={showDeleteDistModal}
+        title="حذف رحلة مخططة"
+        message={`⚠️ هل أنت متأكد من حذف الرحلة المخططة رقم #${distributionTrips.find(t => t.id === tripIdToDeleteDist)?.tripNumber}؟\nسيتم حذفها نهائياً من النظام.`}
+        type="danger"
+        onConfirm={confirmDeleteDistTrip}
+        onCancel={() => {
+          setShowDeleteDistModal(false);
+          setTripIdToDeleteDist(null);
+        }}
+        confirmText="حذف نهائي"
+        cancelText="إلغاء"
+      />
+
+      {showEmptyCartonsModal && selectedCenterForEmpty && (
+        <div className="fixed inset-0 z-[6000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl border-4 border-emerald-600 overflow-hidden">
+            <div className="bg-emerald-600 p-6 text-center">
+               <h3 className="text-xl font-black text-white">تفاصيل الكراتين الفارغة</h3>
+               <p className="text-emerald-100 text-xs font-bold mt-1">{selectedCenterForEmpty.name}</p>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+               <div className="space-y-3">
+                  {selectedCenterForEmpty.items.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 font-bold">لا توجد بيانات متوفرة</div>
+                  ) : (
+                    selectedCenterForEmpty.items.map((item, idx) => (
+                      <div key={idx} className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <span className="font-black text-slate-700 text-sm ArabicText">{item.stageName}</span>
+                        <span className="font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full text-xs">{item.cartons.toLocaleString()} كرتون</span>
+                      </div>
+                    ))
+                  )}
+               </div>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100">
+               <button 
+                 onClick={() => { setShowEmptyCartonsModal(false); setSelectedCenterForEmpty(null); }}
+                 className="w-full bg-slate-800 text-white p-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg"
+               >
+                 إغلاق
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

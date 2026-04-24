@@ -229,6 +229,19 @@ export const App: React.FC = () => {
 
   const handleLogin = async (user: UserCredentials) => {
     setCurrentUser(user);
+    if (firebaseUser) {
+      try {
+        await setDoc(doc(db, 'users', firebaseUser.uid), {
+          id: firebaseUser.uid,
+          role: user.role,
+          code: user.code,
+          displayName: user.displayName,
+          centerCode: (user as any).centerCode || user.code || ''
+        }, { merge: true });
+      } catch (err) {
+        console.error("Failed to sync user role to Firestore:", err);
+      }
+    }
   };
 
   const handleResetAllData = async () => {
@@ -665,7 +678,6 @@ export const App: React.FC = () => {
             userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} 
             users={users} 
             onSelectCenter={() => {}} 
-            // @ts-ignore
             onNewTrip={handleCreateTrip} 
             onNotify={(title, msg) => setShowNotification({ title, msg })}
           />

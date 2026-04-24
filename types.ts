@@ -1,5 +1,5 @@
 
-export type UserRole = 'factory' | 'center' | 'monitor';
+export type UserRole = 'factory' | 'center' | 'monitor' | 'admin';
 // جعل الأكواد مرنة لتقبل أي قيم جديدة مضافة من الإعدادات
 export type PressCode = string;
 export type CenterCode = string;
