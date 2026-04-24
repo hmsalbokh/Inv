@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { InventoryRecord, CenterCode, PalletCondition, PalletType } from '../types';
+import { InventoryRecord, CenterCode, PalletCondition, PalletType, UserRole } from '../types';
 import { db } from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
 
@@ -29,7 +29,7 @@ interface Props {
   onScan: (barcode: string, conditionData?: { condition: PalletCondition, externalDamageQty?: number, internalDamageQty?: number, photos?: string[], notes?: string, damageDetails?: string, hasDiscrepancy?: boolean, discrepancyType?: 'shortage' | 'excess', discrepancyCartonsQty?: number, discrepancyBundlesQty?: number }) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
   currentTruck: string;
   onTruckChange: (val: string) => void;
-  role: 'factory' | 'center' | 'monitor';
+  role: UserRole;
   currentTripId: string;
   records: InventoryRecord[];
   userCenter: CenterCode | null;
