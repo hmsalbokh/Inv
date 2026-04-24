@@ -286,7 +286,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             const extraBundles = Number(row[`${type.stageCode}L`] || 0);
             const bPerC = type.bundlesPerCarton || 1;
             const totalBundles = (cartons * bPerC) + extraBundles;
-            const finalCartonCount = Math.ceil(totalBundles / bPerC);
+            const finalCartonCount = Math.floor(totalBundles / bPerC);
 
             return {
               palletTypeId: type.id,
@@ -368,7 +368,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               const extraBundles = Number(row[`${type.stageCode}L`] || 0);
               const bPerC = type.bundlesPerCarton || 1;
               const totalBundles = (cartons * bPerC) + extraBundles;
-              const finalCartonCount = Math.ceil(totalBundles / bPerC);
+              const finalCartonCount = Math.floor(totalBundles / bPerC);
 
               return {
                 palletTypeId: type.id,
@@ -488,7 +488,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         const totalBundles = (qty.cartons * bPerC) + qty.bundles;
         
         // ثم إعادة توزيعها إلى كراتين كاملة وحزم متبقية
-        const finalCartonCount = Math.ceil(totalBundles / bPerC);
+        const finalCartonCount = Math.floor(totalBundles / bPerC);
         
         return {
           palletTypeId: typeId,
