@@ -369,7 +369,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         executedDate: deleteField(),
         executedQuantities: deleteField()
       });
-      onNotify('نجاح', 'تم التراجع عن التنفيذ وتمت إعادة الرحلة إلى المخطط');
+      onNotify('نجاح', 'تم التراجع عن العملية وتمت إعادة الرحلة إلى قائمة المخطط');
       setShowRevertModal(false);
       setTripIdToRevert(null);
     } catch (e) {
@@ -1378,33 +1378,37 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                               currentStock[q.palletTypeId] = available - q.cartonCount;
                             });
 
+                            const todayStr = new Date().toISOString().split('T')[0];
+                            const isOverdue = trip.date < todayStr;
+
                             return (
-                              <div key={trip.id} className={`p-3 rounded-2xl border transition-all ${hasShortage ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'} flex flex-col gap-2`}>
+                              <div key={trip.id} className={`p-3 rounded-2xl border transition-all ${isOverdue ? 'bg-rose-50 border-rose-200' : hasShortage ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} flex flex-col gap-2 relative overflow-hidden shadow-sm`}>
+                                {isOverdue && <div className="absolute top-0 right-0 px-2 py-0.5 bg-rose-600 text-white text-[6px] font-black uppercase rounded-bl-lg animate-pulse">متأخرة</div>}
                                 <div className="flex justify-between items-center">
                                   <div className="text-right">
-                                    <div className={`text-[10px] font-black ${hasShortage ? 'text-rose-900' : 'text-emerald-900'}`}>رحلة #{trip.tripNumber}</div>
-                                    <div className="text-[8px] font-bold text-slate-500">{trip.destinationCity} - {trip.date}</div>
+                                    <div className={`text-[10px] font-black ${isOverdue ? 'text-rose-900' : hasShortage ? 'text-amber-900' : 'text-emerald-900'}`}>رحلة #{trip.tripNumber}</div>
+                                    <div className={`text-[8px] font-bold ${isOverdue ? 'text-rose-500' : 'text-slate-500'}`}>{trip.destinationCity} - {trip.date}</div>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    {(isAdmin || isMonitor || (role === 'center' && userCenter === center.code)) && (
+                                    {isAdmin && (
                                       <div className="flex items-center gap-1 ml-2">
-                                        <button onClick={() => handleEditDistTrip(trip)} className="p-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-indigo-100 hover:text-indigo-600 transition-all" title="تعديل">
+                                        <button onClick={() => handleEditDistTrip(trip)} className="p-1.5 bg-white/50 text-slate-600 rounded-lg hover:bg-indigo-100 hover:text-indigo-600 transition-all border border-slate-100" title="تعديل">
                                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                         </button>
-                                        <button onClick={() => handleDeleteDistTrip(trip.id)} className="p-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-rose-100 hover:text-rose-600 transition-all" title="حذف">
+                                        <button onClick={() => handleDeleteDistTrip(trip.id)} className="p-1.5 bg-white/50 text-slate-600 rounded-lg hover:bg-rose-100 hover:text-rose-600 transition-all border border-slate-100" title="حذف">
                                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                         </button>
                                       </div>
                                     )}
                                     {hasShortage ? (
-                                      <span className="bg-rose-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase">عجز</span>
+                                      <span className="bg-rose-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase shadow-sm">عجز</span>
                                     ) : (
-                                      <span className="bg-emerald-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase">متاح</span>
+                                      <span className="bg-emerald-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase shadow-sm">متاح</span>
                                     )}
-                                    {(role === 'center' && userCenter === center.code) && (
+                                    {(isAdmin || (role === 'center' && userCenter === center.code)) && (
                                       <button 
                                         onClick={() => handleDispatchTrip(trip.id)}
-                                        className={`${hasShortage ? 'bg-rose-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} text-white px-3 py-1.5 rounded-xl text-[8px] font-black transition-all shadow-sm`}
+                                        className={`${hasShortage ? 'bg-slate-300 cursor-not-allowed text-slate-500' : isOverdue ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white px-3 py-1.5 rounded-xl text-[8px] font-black transition-all shadow-sm`}
                                         disabled={hasShortage}
                                       >
                                         إطلاق
@@ -1464,11 +1468,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                        <span className={`px-2 py-0.5 rounded-full text-[7px] font-black uppercase ${trip.status === 'executed' ? 'bg-slate-200 text-slate-600' : 'bg-indigo-100 text-indigo-600'}`}>
                                          {trip.status === 'executed' ? 'منفذ' : 'جاري الشحن'}
                                        </span>
-                                       {(isAdmin || isMonitor || (role === 'center' && userCenter === center.code)) && trip.status === 'executed' && (
+                                       {isAdmin && (trip.status === 'executed' || trip.status === 'dispatched') && (
                                          <button 
                                            onClick={() => { setTripIdToRevert(trip.id); setShowRevertModal(true); }} 
                                            className="p-1 bg-white text-rose-600 rounded-md border border-rose-100 hover:bg-rose-50 transition-all shadow-sm" 
-                                           title="التراجع عن التنفيذ"
+                                           title="التراجع عن التنفيذ/الإطلاق"
                                          >
                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
                                          </button>
@@ -1751,8 +1755,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       />
       <ConfirmModal
         isOpen={showRevertModal}
-        title="تأكيد التراجع عن التنفيذ"
-        message="هل أنت متأكد من التراجع عن تنفيذ هذه الرحلة؟ سيتم إعادتها إلى قائمة الرحلات المخططة وتعديل رصيد المخزون فوراً."
+        title="تأكيد التراجع عن العملية"
+        message="هل أنت متأكد من التراجع عن هذه الرحلة (تنفيذ أو إطلاق)؟ سيتم إعادتها إلى قائمة الرحلات المخططة وتصحيح رصيد المخزون فوراً."
         type="danger"
         onConfirm={handleRevertExecutionConfirm}
         onCancel={() => { setShowRevertModal(false); setTripIdToRevert(null); }}
