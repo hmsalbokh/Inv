@@ -53,29 +53,27 @@ const generateUUID = () => {
 const formatExcelDate = (val: any): string => {
   if (!val) return new Date().toISOString().split('T')[0];
   
+  let date: Date;
   if (val instanceof Date) {
-    return val.toISOString().split('T')[0];
-  }
-  
-  if (typeof val === 'number') {
-    // Excel dates are numbers representing days since 1900-01-01
-    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-    return date.toISOString().split('T')[0];
-  }
-  
-  const str = String(val).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-  
-  const d = new Date(str);
-  if (!isNaN(d.getTime())) {
-    try {
-      return d.toISOString().split('T')[0];
-    } catch (e) {
-      return str;
+    date = val;
+  } else if (typeof val === 'number') {
+    // Excel serial conversion + 12 hours padding to avoid day shift
+    date = new Date(Math.round((val - 25569) * 86400 * 1000) + 43200000);
+  } else {
+    const str = String(val).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    date = new Date(str);
+    if (!isNaN(date.getTime()) && date.getHours() === 0) {
+      date.setHours(12);
     }
   }
-  
-  return str || new Date().toISOString().split('T')[0];
+
+  if (!date || isNaN(date.getTime())) return String(val);
+
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 const StageCard: React.FC<{ type: PalletType, statsRecords: InventoryRecord[] }> = ({ type, statsRecords }) => {
@@ -173,6 +171,12 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isUploadingExcel, setIsUploadingExcel] = useState(false);
   const [isUploadingActual, setIsUploadingActual] = useState(false);
+  const [showExecutionManualForm, setShowExecutionManualForm] = useState(false);
+  const [executionData, setExecutionData] = useState({
+    tripId: '',
+    date: new Date().toISOString().split('T')[0],
+    quantities: {} as Record<string, { cartons: number, bundles: number }>
+  });
   const [showDistForm, setShowDistForm] = useState(false);
   const [distTripData, setDistTripData] = useState({
     tripNumber: '',
@@ -259,8 +263,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        const arrayBuffer = evt.target?.result;
+        const wb = XLSX.read(arrayBuffer, { cellDates: true });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
@@ -329,7 +333,37 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         if (e.target) e.target.value = '';
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDownloadExecutionTemplate = () => {
+    const plannedTrips = distributionTrips.filter(t => t.status === 'planned' || t.status === 'dispatched');
+    if (plannedTrips.length === 0) {
+      onNotify('تنبيه', 'لا توجد رحلات مخططة حالياً لتوليد قالب لها');
+      return;
+    }
+
+    const exportData = plannedTrips.map(t => {
+      const row: any = {
+        'رقم الرحلة': t.tripNumber,
+        'مركز الانطلاق': t.originCenter,
+        'الوجهة': t.destinationCity,
+        'تاريخ الرحلة': t.date,
+        'تاريخ التنفيذ': t.date,
+      };
+      // إضافة أعمدة لكل مرحلة
+      palletTypes.forEach(type => {
+        const planned = t.quantities.find(q => q.palletTypeId === type.id);
+        row[type.stageName] = planned?.cartonCount || 0;
+        row[`${type.stageName} فرط`] = planned?.bundleCount ? (planned.bundleCount % (type.bundlesPerCarton || 1)) : 0;
+      });
+      return row;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Execution_Template");
+    XLSX.writeFile(wb, `Planned_Trips_Execution_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handleActualExecutionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -340,8 +374,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        const arrayBuffer = evt.target?.result;
+        const wb = XLSX.read(arrayBuffer, { cellDates: true });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
@@ -349,23 +383,59 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         const batch = writeBatch(db);
         let matchCount = 0;
 
-        data.forEach((row) => {
-          const tripNumber = String(row['رقم الرحلة'] || row['tripNumber'] || '').trim();
-          if (!tripNumber) return;
+        const allSystemTrips = distributionTrips.map(t => t.tripNumber.trim().toLowerCase());
+        console.log("Actual Upload Debug: Total rows in Excel:", data.length);
+        console.log("Actual Upload Debug: System trip numbers (lowercase):", allSystemTrips);
+        
+        const tripDiscrepancies: any[] = [];
+        const missingTrips: string[] = [];
+
+        for (const row of data) {
+          // Normalize keys by trimming and removing invisible chars
+          const normalizedRow: any = {};
+          Object.entries(row).forEach(([k, v]) => {
+            const cleanKey = String(k).trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+            normalizedRow[cleanKey] = v;
+          });
+
+          // Robust column name lookup
+          const primaryKeys = ['رقم الرحلة', 'الرحلة', 'رقم', 'tripNumber', 'trip_number', 'Trip', 'trip'];
+          let tripNumberStr = '';
+          for (const key of primaryKeys) {
+            if (normalizedRow[key] !== undefined) {
+              tripNumberStr = String(normalizedRow[key]).trim();
+              break;
+            }
+          }
           
-          // Find if this trip already exists in planned or dispatched trips
-          const existingTrip = distributionTrips.find(t => 
-            t.tripNumber.trim() === tripNumber && 
-            (t.status === 'planned' || t.status === 'dispatched')
-          );
+          if (!tripNumberStr) {
+            console.log("Actual Upload Debug: Skipping row with no trip number column found", normalizedRow);
+            continue;
+          }
+           
+          // Clean trip number - KEEP FULL STRING for alphanumeric IDs like ZDMM-T01
+          const cleanRowNumber = tripNumberStr.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+          
+          console.log(`Actual Upload Debug: Attempting match for [${cleanRowNumber}]`);
+
+          // Find if this trip already exists - robust string matching
+          const existingTrip = distributionTrips.find(t => {
+            const dbTripNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+            
+            // Case-insensitive exact string match
+            return dbTripNum.toLowerCase() === cleanRowNumber.toLowerCase();
+          });
           
           if (existingTrip) {
+            console.log(`Actual Upload Debug: MATCH SUCCESS for [${cleanRowNumber}] -> ID: ${existingTrip.id}`);
             matchCount++;
-            const executedDate = formatExcelDate(row['تاريخ التنفيذ'] || row['تاريخ الرحلة'] || row['date']);
+            const rawDate = normalizedRow['تاريخ التنفيذ'] || normalizedRow['التاريخ'] || normalizedRow['تاريخ الرحلة'] || normalizedRow['date'] || normalizedRow['Date'] || normalizedRow['date_executed'] || normalizedRow['تاريخ تنفيذ الرحلة'];
+            const executedDate = formatExcelDate(rawDate);
             
             const executedQuantities = palletTypes.map(type => {
-              const cartons = Number(row[type.stageCode] || 0);
-              const extraBundles = Number(row[`${type.stageCode}L`] || 0);
+              // Try matching by stageCode or stageName
+              const cartons = Number(normalizedRow[type.stageCode] || normalizedRow[type.stageName] || 0);
+              const extraBundles = Number(normalizedRow[`${type.stageCode}L`] || normalizedRow[`${type.stageName} فرط`] || 0);
               const bPerC = type.bundlesPerCarton || 1;
               const totalBundles = (cartons * bPerC) + extraBundles;
               const finalCartonCount = Math.floor(totalBundles / bPerC);
@@ -377,19 +447,70 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               };
             }).filter(q => q.bundleCount > 0);
 
+            // Calculate discrepancies
+            const dailyDiscrepancies: any[] = [];
+            palletTypes.forEach(type => {
+              const plannedItem = existingTrip.quantities.find(q => q.palletTypeId === type.id);
+              const executedItem = executedQuantities.find(q => q.palletTypeId === type.id);
+              
+              const plannedCount = plannedItem?.cartonCount || 0;
+              const actualCount = executedItem?.cartonCount || 0;
+              
+              if (plannedCount !== actualCount) {
+                dailyDiscrepancies.push({
+                  stageName: type.stageName,
+                  planned: plannedCount,
+                  actual: actualCount,
+                  diff: actualCount - plannedCount
+                });
+              }
+            });
+
+            if (dailyDiscrepancies.length > 0) {
+              const centerUser = users.find(u => u.code === existingTrip.originCenter && u.role === 'center');
+              tripDiscrepancies.push({
+                tripNumber: existingTrip.tripNumber,
+                originCenter: existingTrip.originCenter,
+                date: executedDate,
+                discrepancies: dailyDiscrepancies,
+                recipientEmail: centerUser?.email
+              });
+            }
+
             batch.update(doc(db, 'distributionTrips', existingTrip.id), {
               status: 'executed',
               executedDate,
               executedQuantities
             });
+          } else {
+            console.log(`Debug Upload: FAILED to find match for #${cleanRowNumber}. system contents:`, allSystemTrips);
+            missingTrips.push(cleanRowNumber);
           }
-        });
+        }
 
         if (matchCount > 0) {
           await batch.commit();
-          onNotify('نجاح', `تم مطابقة واعتماد ${matchCount} رحلات فعلية بنجاح`);
+          let successMsg = `تم مطابقة واعتماد ${matchCount} رحلات فعلية بنجاح.`;
+          if (missingTrips.length > 0) {
+            successMsg += `\n⚠️ تنبيه: لم يتم العثور على الرحلات التالية (${missingTrips.join(', ')})`;
+          }
+          onNotify('نجاح', successMsg);
+
+          // Send emails for discrepancies
+          for (const tripResult of tripDiscrepancies) {
+            try {
+              await fetch('/api/notify-shortage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(tripResult)
+              });
+            } catch (err) {
+              console.error(`Failed to send notification for trip ${tripResult.tripNumber}:`, err);
+            }
+          }
         } else {
-          onNotify('تنبيه', 'لم يتم العثور على أي رحلات مطابقة في الخطة');
+          const detail = missingTrips.length > 0 ? `\nالرحلات التي لم تُوجد: ${missingTrips.join(', ')}` : '';
+          onNotify('تنبيه', `لم يتم العثور على أي رحلات مطابقة في الخطة.${detail}`);
         }
       } catch (err) {
         console.error('Actual update error:', err);
@@ -399,7 +520,93 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         if (e.target) e.target.value = '';
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
+  };
+  
+  const handleManualExecutionSubmit = async () => {
+    if (!executionData.tripId || !executionData.date) {
+      onNotify('تنبيه', 'يرجى اختيار الرحلة وتحديد تاريخ التنفيذ');
+      return;
+    }
+
+    const existingTrip = distributionTrips.find(t => t.id === executionData.tripId);
+    if (!existingTrip) return;
+
+    const executedQuantities = Object.entries(executionData.quantities)
+      .filter(([_, qty]) => qty.cartons > 0 || qty.bundles > 0)
+      .map(([typeId, qty]) => {
+        const type = palletTypes.find(t => t.id === typeId);
+        const bPerC = type?.bundlesPerCarton || 1;
+        const totalBundles = (qty.cartons * bPerC) + qty.bundles;
+        const finalCartonCount = Math.floor(totalBundles / bPerC);
+
+        return {
+          palletTypeId: typeId,
+          cartonCount: finalCartonCount,
+          bundleCount: totalBundles
+        };
+      }).filter(q => q.bundleCount > 0);
+
+    if (executedQuantities.length === 0) {
+      onNotify('تنبيه', 'يرجى إضافة كمية منفذة واحدة على الأقل');
+      return;
+    }
+
+    try {
+      // Calculate discrepancies
+      const dailyDiscrepancies: any[] = [];
+      palletTypes.forEach(type => {
+        const plannedItem = existingTrip.quantities.find(q => q.palletTypeId === type.id);
+        const executedItem = executedQuantities.find(q => q.palletTypeId === type.id);
+        
+        const plannedCount = plannedItem?.cartonCount || 0;
+        const actualCount = executedItem?.cartonCount || 0;
+        
+        if (plannedCount !== actualCount) {
+          dailyDiscrepancies.push({
+            stageName: type.stageName,
+            planned: plannedCount,
+            actual: actualCount,
+            diff: actualCount - plannedCount
+          });
+        }
+      });
+
+      if (dailyDiscrepancies.length > 0) {
+        const centerUser = users.find(u => u.code === existingTrip.originCenter && u.role === 'center');
+        try {
+          await fetch('/api/notify-shortage', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tripNumber: existingTrip.tripNumber,
+              originCenter: existingTrip.originCenter,
+              date: executionData.date,
+              discrepancies: dailyDiscrepancies,
+              recipientEmail: centerUser?.email
+            })
+          });
+        } catch (err) {
+          console.error(`Failed to send notification:`, err);
+        }
+      }
+
+      await updateDoc(doc(db, 'distributionTrips', existingTrip.id), {
+        status: 'executed',
+        executedDate: executionData.date,
+        executedQuantities
+      });
+
+      onNotify('نجاح', `تم اعتماد تنفيذ الرحلة #${existingTrip.tripNumber} يدوياً بنجاح`);
+      setShowExecutionManualForm(false);
+      setExecutionData({
+        tripId: '',
+        date: new Date().toISOString().split('T')[0],
+        quantities: {}
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `distributionTrips/${existingTrip.id}`);
+    }
   };
 
   const handleDispatchTrip = async (tripId: string) => {
@@ -538,6 +745,37 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       });
     } catch (e) {
       handleFirestoreError(e, editingTripId ? OperationType.UPDATE : OperationType.CREATE, 'distributionTrips');
+    }
+  };
+
+  const handleShiftPlannedTripDates = async () => {
+    if (!isAdmin) return;
+    try {
+      const plannedTrips = distributionTrips.filter(t => t.status === 'planned');
+      const batch = writeBatch(db);
+      let count = 0;
+      for (const trip of plannedTrips) {
+        if (!trip.date) continue;
+        const d = new Date(trip.date);
+        if (isNaN(d.getTime())) continue;
+        
+        d.setUTCDate(d.getUTCDate() + 1);
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        const newDate = `${y}-${m}-${day}`;
+        
+        batch.update(doc(db, 'distributionTrips', trip.id), { date: newDate });
+        count++;
+      }
+      if (count > 0) {
+        await batch.commit();
+        onNotify('نجاح', `تم تحديث تواريخ ${count} رحلة مخططة (زيادة يوم واحد)`);
+      } else {
+        onNotify('معلومة', 'لا توجد رحلات مخططة تحتاج لتحديث');
+      }
+    } catch(err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'distributionTrips');
     }
   };
 
@@ -921,12 +1159,21 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   {isUploadingActual ? 'جاري الرفع...' : '✅ رفع تقرير التنفيذ الفعلي'}
                   <input type="file" accept=".xlsx, .xls" onChange={handleActualExecutionUpload} className="hidden" disabled={isUploadingActual} />
                 </label>
+                <button onClick={() => setShowExecutionManualForm(true)} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95">
+                  ✏️ إدخال التنفيذ يدوياً
+                </button>
+                <button onClick={handleDownloadExecutionTemplate} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95" title="تحميل قالب الرحلات المخططة">
+                  📄 تحميل قالب التنفيذ المخطط
+                </button>
                 <label className="px-6 py-2.5 rounded-2xl bg-emerald-500/20 backdrop-blur-md border border-emerald-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-emerald-500/30 transition-all active:scale-95 cursor-pointer">
                   {isUploadingExcel ? 'جاري الرفع...' : '📊 رفع خطة التوزيع'}
                   <input type="file" accept=".xlsx, .xls" onChange={handleExcelUpload} className="hidden" disabled={isUploadingExcel} />
                 </label>
                 <button onClick={handleDownloadTemplate} className="px-4 py-2.5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white text-[10px] font-black flex items-center gap-2 hover:bg-white/20 transition-all active:scale-95" title="تحميل القالب">
                   📥 القالب
+                </button>
+                <button onClick={handleShiftPlannedTripDates} className="px-4 py-2.5 rounded-2xl bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-amber-500/30 transition-all active:scale-95" title="تحديث التواريخ">
+                  تحديث تواريخ الخطة (+1 يوم)
                 </button>
               </div>
             </div>
@@ -1090,6 +1337,136 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 className="w-full bg-indigo-900 text-white p-4 rounded-[1.5rem] font-black text-sm shadow-xl active:scale-95 transition-all"
               >
                 حفظ الرحلة
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showExecutionManualForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn overflow-y-auto">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[calc(100vh-2rem)] relative my-auto">
+            <div className="p-6 bg-slate-800 text-white flex justify-between items-center shrink-0">
+              <h3 className="font-black text-lg">تقرير تنفيذ رحلة مخططة</h3>
+              <button onClick={() => {
+                setShowExecutionManualForm(false);
+                setExecutionData({
+                  tripId: '',
+                  date: new Date().toISOString().split('T')[0],
+                  quantities: {}
+                });
+              }} className="text-white/60 hover:text-white p-2">✕</button>
+            </div>
+            <div className="p-6 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 mr-2">اختر الرحلة المخططة</label>
+                <select 
+                  value={executionData.tripId}
+                  onChange={e => {
+                    const tripId = e.target.value;
+                    const trip = distributionTrips.find(t => t.id === tripId);
+                    const newQuants: any = {};
+                    if (trip) {
+                      trip.quantities.forEach(q => {
+                        const type = palletTypes.find(t => t.id === q.palletTypeId);
+                        const bPerC = type?.bundlesPerCarton || 1;
+                        newQuants[q.palletTypeId] = {
+                          cartons: q.cartonCount,
+                          bundles: q.bundleCount % bPerC
+                        };
+                      });
+                    }
+                    setExecutionData({...executionData, tripId, quantities: newQuants});
+                  }}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-3 text-xs font-bold focus:border-indigo-500 outline-none transition-all"
+                >
+                  <option value="">اختر الرحلة...</option>
+                  {distributionTrips
+                    .filter(t => t.status === 'planned' || t.status === 'dispatched')
+                    .map(t => (
+                      <option key={t.id} value={t.id}>
+                        رحلة #{t.tripNumber} - {t.destinationCity} ({t.date})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 mr-2">تاريخ التنفيذ الفعلي</label>
+                <input 
+                  type="date" 
+                  value={executionData.date}
+                  onChange={e => setExecutionData({...executionData, date: e.target.value})}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-3 text-xs font-bold focus:border-indigo-500 outline-none transition-all"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100">
+                <label className="text-[10px] font-black text-slate-400 block mb-3">الكميات المنفذة فعلياً:</label>
+                <div className="space-y-3">
+                  {palletTypes.map(type => {
+                    const isPlanned = executionData.tripId && distributionTrips.find(t => t.id === executionData.tripId)?.quantities.some(q => q.palletTypeId === type.id);
+                    
+                    return (
+                      <div key={type.id} className={`flex flex-col gap-2 p-3 rounded-2xl border ${isPlanned ? 'bg-indigo-50/30 border-indigo-100' : 'bg-slate-50 border-slate-100 opacity-60'}`}>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-black text-slate-700">{type.stageName}</span>
+                          {isPlanned && <span className="text-[8px] font-black text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">مخططة</span>}
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="flex-1 flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200">
+                            <span className="text-[9px] font-black text-slate-400">كرتون</span>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={executionData.quantities[type.id]?.cartons ?? ''}
+                              onChange={e => setExecutionData({
+                                ...executionData, 
+                                quantities: { 
+                                  ...executionData.quantities, 
+                                  [type.id]: { 
+                                    ...(executionData.quantities[type.id] || { bundles: 0 }), 
+                                    cartons: parseInt(e.target.value) || 0 
+                                  } 
+                                }
+                              })}
+                              className="w-full text-center text-xs font-black outline-none"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="flex-1 flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200">
+                            <span className="text-[9px] font-black text-slate-400">حزمة</span>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={executionData.quantities[type.id]?.bundles ?? ''}
+                              onChange={e => setExecutionData({
+                                ...executionData, 
+                                quantities: { 
+                                  ...executionData.quantities, 
+                                  [type.id]: { 
+                                    ...(executionData.quantities[type.id] || { cartons: 0 }), 
+                                    bundles: parseInt(e.target.value) || 0 
+                                  } 
+                                }
+                              })}
+                              className="w-full text-center text-xs font-black outline-none"
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100 shrink-0">
+              <button 
+                onClick={handleManualExecutionSubmit}
+                className="w-full bg-slate-800 text-white p-4 rounded-[1.5rem] font-black text-sm shadow-xl active:scale-95 transition-all"
+              >
+                اعتماد التنفيذ
               </button>
             </div>
           </div>

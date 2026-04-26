@@ -14,6 +14,7 @@ export interface UserCredentials {
   username: string;
   password: string;
   displayName: string; // اسم الموظف
+  email?: string; // بريد إلكتروني اختياري للمراسلات
 }
 
 export interface PalletType {
