@@ -237,16 +237,18 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     XLSX.writeFile(wb, "Distribution_Plan_Template.xlsx");
   };
 
-  const isAdmin = useMemo(() => userCode === 'ADMIN' || (role as string) === 'monitor' || (role as string) === 'admin', [userCode, role]);
+  const isAdmin = useMemo(() => userCode === 'ADMIN' || (role as string) === 'admin', [userCode, role]);
+  const isMonitor = useMemo(() => (role as string) === 'monitor', [role]);
+  const isCanViewAll = useMemo(() => isAdmin || isMonitor, [isAdmin, isMonitor]);
 
   const statsRecords = useMemo(() => {
     const baseRecords = records.filter(r => r.status !== 'cancelled');
-    return (role === 'monitor' || isAdmin) ? baseRecords : baseRecords.filter(r => {
+    return (isCanViewAll) ? baseRecords : baseRecords.filter(r => {
       if (role === 'factory') return r.palletBarcode.includes(userCode);
       if (role === 'center') return r.destination === userCenter;
       return false;
     });
-  }, [records, role, userCode, userCenter, isAdmin]);
+  }, [records, role, userCode, userCenter, isCanViewAll]);
 
   const handleAiAnalysis = async () => {
     setIsAnalyzing(true);
@@ -1130,8 +1132,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     setTimeout(() => setShowLabels(true), 500);
   };
 
-  const isMonitor = role === 'monitor' || isAdmin;
-  const showStatsReport = isMonitor || role === 'center';
+  const showStatsReport = isCanViewAll || role === 'center';
 
   return (
     <div className="space-y-6 animate-fadeIn pb-10 text-right" dir="rtl">
@@ -1486,7 +1487,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       )}
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {(isAdmin || isMonitor) && (
+        {(isAdmin || isCanViewAll) && (
           <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 flex flex-col gap-4">
             <div className="flex items-center gap-3">
               <span className="text-2xl">📑</span>
@@ -1522,13 +1523,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                    onClick={() => handleExportTripPallets(selectedTripForControl)}
                    className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-emerald-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
                  >📊 تصدير Excel</button>
-                 <button 
-                   disabled={!selectedTripForControl}
-                   onClick={() => {
-                     handleCancelTrip(selectedTripForControl);
-                   }}
-                   className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-rose-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
-                 >🚫 إلغاء الرحلة</button>
+                 {isAdmin && (
+                   <button 
+                     disabled={!selectedTripForControl}
+                     onClick={() => {
+                       handleCancelTrip(selectedTripForControl);
+                     }}
+                     className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-rose-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
+                   >🚫 إلغاء الرحلة</button>
+                 )}
               </div>
             </div>
           </div>
@@ -1628,7 +1631,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         <section className="space-y-6 animate-slideDown">
           <div className="flex items-center justify-between px-2">
              <h3 className="text-lg font-black text-indigo-900 px-2">🏢 مراكز الخدمات اللوجستية</h3>
-             {isAdmin && (
+             {isCanViewAll && (
                <button 
                  onClick={handleExportCenterInventory}
                  className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-sm"
