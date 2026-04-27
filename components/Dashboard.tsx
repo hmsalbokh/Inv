@@ -282,9 +282,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           if (processedNumbers.has(tripNumber)) return;
           processedNumbers.add(tripNumber);
           
-          // البحث عن رحلة موجودة بنفس الرقم ولا زالت في حالة التخطيط
+          // البحث عن رحلة موجودة بنفس الرقم لمنع التكرار (بغض النظر عن الحالة)
           const existingTrip = distributionTrips.find(t => 
-            t.tripNumber.trim() === tripNumber && t.status === 'planned'
+            t.tripNumber.trim().toLowerCase() === tripNumber.toLowerCase()
           );
 
           const quantities = palletTypes.map(type => {
