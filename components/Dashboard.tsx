@@ -808,88 +808,150 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
   const handleExportCenterInventory = () => {
     const exportData: any[] = [];
+    const isDateFiltered = exportStartDate || exportEndDate;
 
     centerOptions.forEach(center => {
       const centerRecords = statsRecords.filter(r => r.destination === center.code);
-      let receivedRecords = centerRecords.filter(r => r.status === 'received');
+      const receivedRecords = centerRecords.filter(r => r.status === 'received');
 
-      // تطبيق فلتر التاريخ إذا وجد
-      if (exportStartDate || exportEndDate) {
-        receivedRecords = receivedRecords.filter(r => {
-          const rDate = r.centerTimestamp ? new Date(r.centerTimestamp) : (r.timestamp ? new Date(r.timestamp) : null);
-          if (!rDate) return false;
+      if (isDateFiltered) {
+        // Mode: Trips with deficit in date range
+        const centerTrips = distributionTrips
+          .filter(t => t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase())
+          .sort((a, b) => a.date.localeCompare(b.date));
+
+        // Initial stock calculation per pallet type for the center
+        const currentStock = palletTypes.reduce((acc, type) => {
+          const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
+          let totalC = 0;
+          typeInCenter.forEach(r => {
+            let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
+            if (r.extraCartons) c += r.extraCartons;
+            if (r.missingCartons) c -= r.missingCartons;
+            if (r.hasDiscrepancy) {
+              const sign = r.discrepancyType === 'excess' ? 1 : -1;
+              c += sign * (r.discrepancyCartonsQty || 0);
+            }
+            totalC += c;
+          });
+
+          // Subtract already executed or dispatched trips
+          const centerExecutedTrips = centerTrips.filter(t => t.status !== 'planned');
+          centerExecutedTrips.forEach(et => {
+             const qt = (et.executedQuantities || et.quantities).find(q => q.palletTypeId === type.id);
+             if (qt) totalC -= qt.cartonCount;
+          });
+
+          acc[type.id] = totalC;
+          return acc;
+        }, {} as Record<string, number>);
+
+        // Process planned trips in chronological order to correctly calculate deficits
+        centerTrips.filter(t => t.status === 'planned').forEach(trip => {
+          let hasShortage = false;
+          const tripDeficits: { typeId: string, q: number, deficit: number }[] = [];
+
+          trip.quantities.forEach(q => {
+            const available = currentStock[q.palletTypeId] || 0;
+            if (available < q.cartonCount) {
+              hasShortage = true;
+              tripDeficits.push({
+                typeId: q.palletTypeId,
+                q: q.cartonCount,
+                deficit: q.cartonCount - available
+              });
+            }
+            currentStock[q.palletTypeId] = available - q.cartonCount;
+          });
+
+          if (hasShortage) {
+            // Apply date filter to the trip
+            const tripDate = trip.date;
+            let inRange = true;
+            if (exportStartDate && tripDate < exportStartDate) inRange = false;
+            if (exportEndDate && tripDate > exportEndDate) inRange = false;
+
+            if (inRange) {
+              tripDeficits.forEach(d => {
+                const type = palletTypes.find(t => t.id === d.typeId);
+                exportData.push({
+                  'المركز الأصل': center.displayName,
+                  'رقم الرحلة': trip.tripNumber,
+                  'تاريخ الرحلة': trip.date,
+                  'الوجهة': trip.destinationCity,
+                  'المرحلة': type?.stageName || 'غير معروف',
+                  'الكمية المخططة (كرتون)': d.q,
+                  'العجز (كرتون)': d.deficit,
+                  'العجز (حزمة)': d.deficit * (type?.bundlesPerCarton || 0),
+                  'العجز (طبلية)': type?.cartonsPerPallet ? (d.deficit / type.cartonsPerPallet).toFixed(2) : '0'
+                });
+              });
+            }
+          }
+        });
+      } else {
+        palletTypes.forEach(type => {
+          const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
+          const plannedQty = stats.plannedOutbound[center.code]?.[type.id] || 0;
           
-          const rDateStr = rDate.toISOString().split('T')[0];
-          
-          if (exportStartDate && rDateStr < exportStartDate) return false;
-          if (exportEndDate && rDateStr > exportEndDate) return false;
-          
-          return true;
+          const palletCount = typeInCenter.length;
+
+          let totalCartons = 0;
+          let totalBundles = 0;
+          let diffCartons = 0;
+          let diffBundles = 0;
+
+          typeInCenter.forEach(r => {
+            let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
+            let b = c * type.bundlesPerCarton;
+
+            if (r.extraCartons) {
+              c += r.extraCartons;
+              b += r.extraCartons * type.bundlesPerCarton;
+              diffCartons += r.extraCartons;
+              diffBundles += r.extraCartons * type.bundlesPerCarton;
+            }
+            if (r.missingCartons) {
+              c -= r.missingCartons;
+              b -= r.missingCartons * type.bundlesPerCarton;
+              diffCartons -= r.missingCartons;
+              diffBundles -= r.missingCartons * type.bundlesPerCarton;
+            }
+
+            if (r.hasDiscrepancy) {
+              const sign = r.discrepancyType === 'excess' ? 1 : -1;
+              const diffC = r.discrepancyCartonsQty || 0;
+              const diffB = r.discrepancyBundlesQty || 0;
+              diffCartons += sign * diffC;
+              diffBundles += sign * diffB;
+              
+              c += sign * diffC;
+              b += sign * ((diffC * type.bundlesPerCarton) + diffB);
+            }
+            totalCartons += c;
+            totalBundles += b;
+          });
+
+          const remaining = totalCartons - plannedQty;
+          const remainingPallets = type.cartonsPerPallet > 0 ? (remaining / type.cartonsPerPallet).toFixed(2) : '0';
+
+          if (palletCount > 0 || plannedQty > 0) {
+            exportData.push({
+              'المركز': center.locationName || center.displayName,
+              'المرحلة': type.stageName,
+              'عدد الطبليات (المستلمة)': palletCount,
+              'التباين (كرتون)': diffCartons,
+              'التباين (حزمة)': diffBundles,
+              'إجمالي الكراتين': totalCartons,
+              'إجمالي الحزم': totalBundles,
+              'مخطط صرفه (كرتون)': plannedQty,
+              'المخزون المتبقي (كرتون)': remaining,
+              'المخزون المتبقي (حزمة)': remaining * type.bundlesPerCarton,
+              'الطبليات المتبقية': remainingPallets
+            });
+          }
         });
       }
-
-      palletTypes.forEach(type => {
-        const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
-        const plannedQty = stats.plannedOutbound[center.code]?.[type.id] || 0;
-        
-        const palletCount = typeInCenter.length;
-
-        let totalCartons = 0;
-        let totalBundles = 0;
-        let diffCartons = 0;
-        let diffBundles = 0;
-
-        typeInCenter.forEach(r => {
-          let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
-          let b = c * type.bundlesPerCarton;
-
-          if (r.extraCartons) {
-            c += r.extraCartons;
-            b += r.extraCartons * type.bundlesPerCarton;
-            diffCartons += r.extraCartons;
-            diffBundles += r.extraCartons * type.bundlesPerCarton;
-          }
-          if (r.missingCartons) {
-            c -= r.missingCartons;
-            b -= r.missingCartons * type.bundlesPerCarton;
-            diffCartons -= r.missingCartons;
-            diffBundles -= r.missingCartons * type.bundlesPerCarton;
-          }
-
-          if (r.hasDiscrepancy) {
-            const sign = r.discrepancyType === 'excess' ? 1 : -1;
-            const diffC = r.discrepancyCartonsQty || 0;
-            const diffB = r.discrepancyBundlesQty || 0;
-            diffCartons += sign * diffC;
-            diffBundles += sign * diffB;
-            
-            c += sign * diffC;
-            b += sign * ((diffC * type.bundlesPerCarton) + diffB);
-          }
-          totalCartons += c;
-          totalBundles += b;
-        });
-
-        const remaining = totalCartons - plannedQty;
-        // حساب عدد الطبليات المتبقية (بناءً على السعة الأصلية للطبلية)
-        const remainingPallets = type.cartonsPerPallet > 0 ? (remaining / type.cartonsPerPallet).toFixed(2) : '0';
-
-        if (palletCount > 0 || plannedQty > 0) {
-          exportData.push({
-            'المركز': center.locationName || center.displayName,
-            'المرحلة': type.stageName,
-            'عدد الطبليات (المستلمة)': palletCount,
-            'التباين (كرتون)': diffCartons,
-            'التباين (حزمة)': diffBundles,
-            'إجمالي الكراتين': totalCartons,
-            'إجمالي الحزم': totalBundles,
-            'مخطط صرفه (كرتون)': plannedQty,
-            'المخزون المتبقي (كرتون)': remaining,
-            'المخزون المتبقي (حزمة)': remaining * type.bundlesPerCarton,
-            'الطبليات المتبقية': remainingPallets
-          });
-        }
-      });
     });
 
     if (exportData.length === 0) {
@@ -899,8 +961,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Inventory Report");
-    XLSX.writeFile(wb, `Inventory_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, isDateFiltered ? "Deficit Trips" : "Inventory Report");
+    XLSX.writeFile(wb, `${isDateFiltered ? 'Deficit_Trips' : 'Inventory_Report'}_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handleCancelTrip = (tripId: string) => {
