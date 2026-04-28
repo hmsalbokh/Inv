@@ -31,7 +31,13 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   // جلب اسم المنشأة ديناميكياً
   const getEntityName = (code: string) => {
      const u = users.find(u => u.code === code);
-     return u ? (u.locationName || u.displayName) : code;
+     if (!u) return code;
+     let name = u.locationName || u.displayName;
+     if (name.includes(' - ')) {
+       const parts = name.split(' - ');
+       return parts[1].trim();
+     }
+     return name;
   };
 
   const formatDateTime = (ts: number | undefined) => {
