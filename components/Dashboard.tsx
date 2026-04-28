@@ -1183,7 +1183,25 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     };
   }, [statsRecords, palletTypes, distributionTrips]);
 
-  const getDisplayName = (code: string) => users.find(u => u.code === code)?.displayName || code;
+  const getDisplayName = (code: string) => {
+    const u = users.find(u => u.code === code);
+    if (!u) return code;
+    
+    let name = u.locationName || u.displayName;
+    
+    // Explicit fixes for main centers
+    if (u.code === 'DMM' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز الدمام';
+    if (u.code === 'RYD' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز الرياض';
+    if (u.code === 'JED' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز جدة';
+    
+    // Handle "User - Location" pattern
+    if (name.includes(' - ')) {
+      const parts = name.split(' - ');
+      return parts[1].trim(); 
+    }
+    
+    return name;
+  };
 
   const generateLabelContent = (record: InventoryRecord, size: LabelSize) => {
     const pType = palletTypes.find(t => t.id === record?.palletTypeId);
