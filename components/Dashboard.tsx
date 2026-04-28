@@ -881,9 +881,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   'الوجهة': trip.destinationCity,
                   'المرحلة': type?.stageName || 'غير معروف',
                   'الكمية المخططة (كرتون)': d.q,
+                  'الحزم المخطط لها': d.q * (type?.bundlesPerCarton || 0),
                   'العجز (كرتون)': d.deficit,
                   'العجز (حزمة)': d.deficit * (type?.bundlesPerCarton || 0),
-                  'العجز (طبلية)': type?.cartonsPerPallet ? (d.deficit / type.cartonsPerPallet).toFixed(2) : '0'
+                  'العجز (طبلية)': type?.cartonsPerPallet ? (d.deficit / type.cartonsPerPallet).toFixed(2) : '0',
+                  'الحر المتبقي حزم': currentStock[d.typeId] * (type?.bundlesPerCarton || 0)
                 });
               });
             }
