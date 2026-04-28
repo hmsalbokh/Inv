@@ -34,6 +34,31 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
      return u ? (u.locationName || u.displayName) : code;
   };
 
+  const formatDateTime = (ts: number | undefined) => {
+    if (!ts) return '---';
+    const date = new Date(ts);
+    return date.toLocaleString('ar-SA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const formatDuration = (ms: number) => {
+    if (ms <= 0) return '---';
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days} يوم و ${hours % 24} ساعة`;
+    if (hours > 0) return `${hours} ساعة و ${minutes % 60} دقيقة`;
+    if (minutes > 0) return `${minutes} دقيقة`;
+    return `${seconds} ثانية`;
+  };
+
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
     const unique = new Map();
@@ -286,6 +311,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
             const isExpanded = expandedId === record.id;
             const cond = getConditionLabel(record);
             const pType = palletTypes.find(t => t.id === record.palletTypeId);
+            const trip = trips.find(t => t.id === record.tripId);
 
             return (
               <div key={record.id} className={`bg-white rounded-[2.5rem] shadow-sm border transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-2 ring-indigo-500 border-transparent' : 'border-slate-100'}`}>
@@ -333,6 +359,83 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                          <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الوجهة</span>
                          <span className="text-[10px] font-bold text-slate-800 block text-right">{getEntityName(record.destination)}</span>
                       </div>
+                    </div>
+
+                    {/*Timeline Movement Log*/}
+                    <div className="bg-slate-50 p-5 rounded-[2.5rem] border border-slate-100 space-y-4">
+                       <h4 className="text-[11px] font-black text-slate-700 border-b border-indigo-100 pb-2 mb-2 flex items-center gap-2">
+                         <span className="bg-indigo-100 p-1.5 rounded-lg">📦</span>
+                         التسلسل الزمني للتحركات
+                       </h4>
+                       <div className="relative space-y-6 mr-1 pr-1">
+                          {/* Stage 1: Creation */}
+                          <div className="relative flex items-start gap-4">
+                            <div className="absolute right-[9px] top-[18px] bottom-[-30px] w-0.5 bg-slate-200"></div>
+                            <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center shrink-0 z-10 border-2 border-white shadow-sm">
+                              <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
+                            </div>
+                            <div className="flex-1 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-[10px] font-black text-slate-800">التجهيز في المطبعة</span>
+                                <span className="text-[8px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md font-mono" dir="ltr">
+                                  {formatDateTime(trip?.startDate || record.timestamp)}
+                                </span>
+                              </div>
+                              <p className="text-[8px] text-slate-400 leading-relaxed">تم إصدار الباركود وربطه بالرحلة رقم #{trip?.tripNumber || '---'}</p>
+                            </div>
+                          </div>
+
+                          {/* Stage 2: Departure */}
+                          <div className="relative flex items-start gap-4">
+                            <div className="absolute right-[9px] top-[18px] bottom-[-30px] w-0.5 bg-slate-200"></div>
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 border-2 border-white shadow-sm ${record.factoryTimestamp ? 'bg-amber-500' : 'bg-slate-200'}`}>
+                               <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
+                            </div>
+                            <div className={`flex-1 p-3 rounded-2xl border shadow-sm transition-all ${record.factoryTimestamp ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-dashed border-slate-200 opacity-60'}`}>
+                               <div className="flex justify-between items-center mb-1">
+                                 <span className={`text-[10px] font-black ${record.factoryTimestamp ? 'text-slate-800' : 'text-slate-400'}`}>مغادرة المطبعة (خروج)</span>
+                                 {record.factoryTimestamp && (
+                                   <span className="text-[8px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md font-mono" dir="ltr">
+                                     {formatDateTime(record.factoryTimestamp)}
+                                   </span>
+                                 )}
+                               </div>
+                               {record.factoryTimestamp && (trip?.startDate || record.timestamp) && (
+                                 <div className="mt-2 flex items-center gap-1 text-[8px] font-bold text-amber-600 bg-amber-50 w-fit px-2 py-1 rounded-lg">
+                                    <span>⏱️ مدة التجهيز:</span>
+                                    <span className="font-black underline decoration-amber-200 decoration-2 underline-offset-2">
+                                      {formatDuration(record.factoryTimestamp - (trip?.startDate || record.timestamp))}
+                                    </span>
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+
+                          {/* Stage 3: Arrival */}
+                          <div className="relative flex items-start gap-4">
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 border-2 border-white shadow-sm ${record.centerTimestamp ? 'bg-emerald-600' : 'bg-slate-200'}`}>
+                               <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
+                            </div>
+                            <div className={`flex-1 p-3 rounded-2xl border shadow-sm transition-all ${record.centerTimestamp ? 'bg-white border-slate-100' : 'bg-slate-50/50 border-dashed border-slate-200 opacity-60'}`}>
+                               <div className="flex justify-between items-center mb-1">
+                                 <span className={`text-[10px] font-black ${record.centerTimestamp ? 'text-slate-800' : 'text-slate-400'}`}>الاستلام في المركز (وصول)</span>
+                                 {record.centerTimestamp && (
+                                   <span className="text-[8px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-mono" dir="ltr">
+                                     {formatDateTime(record.centerTimestamp)}
+                                   </span>
+                                 )}
+                               </div>
+                               {record.centerTimestamp && record.factoryTimestamp && (
+                                 <div className="mt-2 flex items-center gap-1 text-[8px] font-bold text-emerald-600 bg-emerald-50 w-fit px-2 py-1 rounded-lg">
+                                    <span>🚚 مدة النقل:</span>
+                                    <span className="font-black underline decoration-emerald-200 decoration-2 underline-offset-2">
+                                      {formatDuration(record.centerTimestamp - record.factoryTimestamp)}
+                                    </span>
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+                       </div>
                     </div>
 
                     {role !== 'center' && (
