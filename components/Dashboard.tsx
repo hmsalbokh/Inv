@@ -190,12 +190,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [selectedTripForControl, setSelectedTripForControl] = useState<string>('');
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [tripIdToCancel, setTripIdToCancel] = useState<string | null>(null);
+  const [showRestoreTripModal, setShowRestoreTripModal] = useState(false);
+  const [tripIdToRestore, setTripIdToRestore] = useState<string | null>(null);
   const [showCancelledInControl, setShowCancelledInControl] = useState(false);
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [tripIdToRevert, setTripIdToRevert] = useState<string | null>(null);
   const [showDeleteDistModal, setShowDeleteDistModal] = useState(false);
   const [tripIdToDeleteDist, setTripIdToDeleteDist] = useState<string | null>(null);
   const [showEmptyCartonsModal, setShowEmptyCartonsModal] = useState(false);
+  const [showBalanceDetailModal, setShowBalanceDetailModal] = useState(false);
+  const [selectedCenterForBalance, setSelectedCenterForBalance] = useState<{
+    name: string;
+    code: string;
+    details: { stageName: string; remainingCartons: number; remainingBundles: number; totalBundles: number }[];
+  } | null>(null);
+  const [exportStartDate, setExportStartDate] = useState('');
+  const [exportEndDate, setExportEndDate] = useState('');
   const [selectedCenterForEmpty, setSelectedCenterForEmpty] = useState<{
     name: string;
     items: { stageName: string; cartons: number }[];
@@ -204,9 +214,24 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
     const uniqueCenters = new Map();
-    centers.forEach(c => {
+    
+    // Sort to handle those with locationName first
+    const sortedCenters = [...centers].sort((a, b) => {
+      const aHasLocation = a.locationName && a.locationName.trim() !== '';
+      const bHasLocation = b.locationName && b.locationName.trim() !== '';
+      if (aHasLocation && !bHasLocation) return -1;
+      if (!aHasLocation && bHasLocation) return 1;
+      return 0;
+    });
+
+    sortedCenters.forEach(c => {
       if (!uniqueCenters.has(c.code)) {
-        uniqueCenters.set(c.code, { ...c, displayName: c.locationName || c.displayName });
+        let finalName = c.locationName || c.displayName;
+        if (c.code === 'DMM' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الدمام';
+        if (c.code === 'RYD' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الرياض';
+        if (c.code === 'JED' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز جدة';
+        
+        uniqueCenters.set(c.code, { ...c, displayName: finalName });
       }
     });
     return Array.from(uniqueCenters.values());
@@ -786,7 +811,22 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
     centerOptions.forEach(center => {
       const centerRecords = statsRecords.filter(r => r.destination === center.code);
-      const receivedRecords = centerRecords.filter(r => r.status === 'received');
+      let receivedRecords = centerRecords.filter(r => r.status === 'received');
+
+      // تطبيق فلتر التاريخ إذا وجد
+      if (exportStartDate || exportEndDate) {
+        receivedRecords = receivedRecords.filter(r => {
+          const rDate = r.centerTimestamp ? new Date(r.centerTimestamp) : (r.timestamp ? new Date(r.timestamp) : null);
+          if (!rDate) return false;
+          
+          const rDateStr = rDate.toISOString().split('T')[0];
+          
+          if (exportStartDate && rDateStr < exportStartDate) return false;
+          if (exportEndDate && rDateStr > exportEndDate) return false;
+          
+          return true;
+        });
+      }
 
       palletTypes.forEach(type => {
         const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
@@ -831,6 +871,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         });
 
         const remaining = totalCartons - plannedQty;
+        // حساب عدد الطبليات المتبقية (بناءً على السعة الأصلية للطبلية)
+        const remainingPallets = type.cartonsPerPallet > 0 ? (remaining / type.cartonsPerPallet).toFixed(2) : '0';
 
         if (palletCount > 0 || plannedQty > 0) {
           exportData.push({
@@ -843,7 +885,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             'إجمالي الحزم': totalBundles,
             'مخطط صرفه (كرتون)': plannedQty,
             'المخزون المتبقي (كرتون)': remaining,
-            'المخزون المتبقي (حزمة)': remaining * type.bundlesPerCarton
+            'المخزون المتبقي (حزمة)': remaining * type.bundlesPerCarton,
+            'الطبليات المتبقية': remainingPallets
           });
         }
       });
@@ -900,6 +943,45 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       setShowCancelModal(false);
       setTripIdToCancel(null);
       setSelectedTripForControl('');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'trips');
+    }
+  };
+
+  const handleRestoreTrip = (tripId: string) => {
+    const trip = trips.find(t => t.id === tripId);
+    if (!trip) return;
+    if (trip.status !== 'cancelled') {
+        onNotify('تنبيه', 'هذه الرحلة ليست ملغاة');
+        return;
+    }
+    setTripIdToRestore(tripId);
+    setShowRestoreTripModal(true);
+  };
+
+  const confirmRestoreTrip = async () => {
+    if (!tripIdToRestore) return;
+    const trip = trips.find(t => t.id === tripIdToRestore);
+    if (!trip) return;
+
+    try {
+      const tripRecords = records.filter(r => r.tripId === tripIdToRestore);
+      const batch = writeBatch(db);
+      
+      // إعادة الرحلة لحالة النشاط
+      batch.update(doc(db, 'trips', tripIdToRestore), { status: 'active' });
+      
+      // إعادة كل طبلية لحالتها السابقة قبل الإلغاء
+      // إذا كانت قد مسحت في المطبعة تعود لـ in_transit وإلا pending
+      tripRecords.forEach(r => {
+        const newStatus = r.factoryTimestamp ? 'in_transit' : 'pending';
+        batch.update(doc(db, 'records', r.id), { status: newStatus });
+      });
+      
+      await batch.commit();
+      onNotify('نجاح', `تم استعادة الرحلة #${trip.tripNumber} وإعادتها لحالة النشاط`);
+      setShowRestoreTripModal(false);
+      setTripIdToRestore(null);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, 'trips');
     }
@@ -1523,15 +1605,25 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                    onClick={() => handleExportTripPallets(selectedTripForControl)}
                    className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-emerald-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
                  >📊 تصدير Excel</button>
-                 {isAdmin && (
-                   <button 
-                     disabled={!selectedTripForControl}
-                     onClick={() => {
-                       handleCancelTrip(selectedTripForControl);
-                     }}
-                     className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-rose-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
-                   >🚫 إلغاء الرحلة</button>
-                 )}
+                  {isAdmin && (
+                    <>
+                      {trips.find(t => t.id === selectedTripForControl)?.status === 'cancelled' ? (
+                        <button 
+                          disabled={!selectedTripForControl}
+                          onClick={() => handleRestoreTrip(selectedTripForControl)}
+                          className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-indigo-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
+                        >🔄 استعادة الرحلة</button>
+                      ) : (
+                        <button 
+                          disabled={!selectedTripForControl}
+                          onClick={() => {
+                            handleCancelTrip(selectedTripForControl);
+                          }}
+                          className={`flex-1 py-3 rounded-xl text-[10px] font-black shadow-sm transition-all flex items-center justify-center gap-2 ${selectedTripForControl ? 'bg-rose-600 text-white active:scale-95' : 'bg-slate-200 text-slate-400'}`}
+                        >🚫 إلغاء الرحلة</button>
+                      )}
+                    </>
+                  )}
               </div>
             </div>
           </div>
@@ -1629,15 +1721,35 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
       {(role === 'center' || isMonitor || isAdmin) && (
         <section className="space-y-6 animate-slideDown">
-          <div className="flex items-center justify-between px-2">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 px-2">
              <h3 className="text-lg font-black text-indigo-900 px-2">🏢 مراكز الخدمات اللوجستية</h3>
              {isCanViewAll && (
-               <button 
-                 onClick={handleExportCenterInventory}
-                 className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-sm"
-               >
-                 📊 تصدير البيانات (Excel)
-               </button>
+               <div className="flex flex-wrap items-center gap-2 bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+                 <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-slate-400">من:</span>
+                    <input 
+                      type="date" 
+                      value={exportStartDate}
+                      onChange={e => setExportStartDate(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 rounded-lg p-1 text-[10px] font-bold outline-none focus:border-indigo-500"
+                    />
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black text-slate-400">إلى:</span>
+                    <input 
+                      type="date" 
+                      value={exportEndDate}
+                      onChange={e => setExportEndDate(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 rounded-lg p-1 text-[10px] font-bold outline-none focus:border-indigo-500"
+                    />
+                 </div>
+                 <button 
+                   onClick={handleExportCenterInventory}
+                   className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-sm"
+                 >
+                   📊 تصدير البيانات (Excel)
+                 </button>
+               </div>
              )}
           </div>
           
@@ -1690,6 +1802,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               });
 
               let exportedBookCartons = 0;
+              let exportedBookBundles = 0;
               let exportedEmptyCartons = 0;
               const centerExecutedTripsForCalc = distributionTrips.filter(t => 
                 t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
@@ -1705,12 +1818,14 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                       emptyBreakdownMap[type.stageName] = (emptyBreakdownMap[type.stageName] || 0) - q.cartonCount;
                     } else {
                       exportedBookCartons += q.cartonCount;
+                      exportedBookBundles += (q.cartonCount * type.bundlesPerCarton) + (q.bundleCount || 0);
                     }
                   }
                 });
               });
               
               const remainingBookBalance = centerCartons - exportedBookCartons;
+              const remainingBookBundles = centerBundles - exportedBookBundles;
               const remainingEmptyBalance = centerEmptyCartons - exportedEmptyCartons;
 
               const centerPlannedTrips = distributionTrips
@@ -1760,9 +1875,57 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                       <span className="text-[8px] font-black text-indigo-400 uppercase block">تم التصدير (خروج)</span>
                       <span className="text-sm font-black text-indigo-900">{exportedBookCartons.toLocaleString()} كرتون</span>
                     </div>
-                    <div className={`${remainingBookBalance <= 0 ? 'bg-slate-50 border-slate-200' : 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-100'} p-2 rounded-2xl text-center flex flex-col justify-center transition-all`}>
+                    <div 
+                      onClick={() => {
+                        const details: { stageName: string; remainingCartons: number; remainingBundles: number; totalBundles: number }[] = [];
+                        
+                        palletTypes.filter(t => !t.stageCode.toUpperCase().startsWith('F')).forEach(type => {
+                          let stageReceivedBundles = 0;
+                          receivedRecords.filter(r => r.palletTypeId === type.id).forEach(r => {
+                            let b = type.cartonsPerPallet * type.bundlesPerCarton;
+                            if (r.isExtraOnly) b = 0;
+                            if (r.extraCartons) b += r.extraCartons * type.bundlesPerCarton;
+                            if (r.missingCartons) b -= r.missingCartons * type.bundlesPerCarton;
+                            if (r.hasDiscrepancy) {
+                              const sign = r.discrepancyType === 'excess' ? 1 : -1;
+                              b += sign * ((r.discrepancyCartonsQty || 0) * type.bundlesPerCarton + (r.discrepancyBundlesQty || 0));
+                            }
+                            stageReceivedBundles += b;
+                          });
+
+                          let stageShippedBundles = 0;
+                          centerExecutedTripsForCalc.forEach(et => {
+                            const q = (et.executedQuantities || et.quantities).find(qty => qty.palletTypeId === type.id);
+                            if (q) {
+                              stageShippedBundles += (q.cartonCount * type.bundlesPerCarton) + (q.bundleCount || 0);
+                            }
+                          });
+
+                          const remainingBundlesTotal = stageReceivedBundles - stageShippedBundles;
+                          if (remainingBundlesTotal > 0) {
+                            details.push({
+                              stageName: type.stageName,
+                              remainingCartons: Math.floor(remainingBundlesTotal / type.bundlesPerCarton),
+                              remainingBundles: remainingBundlesTotal % type.bundlesPerCarton,
+                              totalBundles: remainingBundlesTotal
+                            });
+                          }
+                        });
+
+                        setSelectedCenterForBalance({
+                          name: center.displayName,
+                          code: center.code,
+                          details
+                        });
+                        setShowBalanceDetailModal(true);
+                      }}
+                      className={`${remainingBookBalance <= 0 ? 'bg-slate-50 border-slate-200' : 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-100 cursor-pointer active:scale-95'} p-2 rounded-2xl text-center flex flex-col justify-center transition-all`}
+                    >
                       <span className={`text-[8px] font-black uppercase block ${remainingBookBalance <= 0 ? 'text-slate-400' : 'text-emerald-100'}`}>الرصيد المتبقي الحر</span>
-                      <span className={`text-sm font-black ${remainingBookBalance <= 0 ? 'text-slate-400' : 'text-white'}`}>{remainingBookBalance.toLocaleString()} كرتون</span>
+                      <div className="flex flex-col items-center">
+                        <span className={`text-sm font-black ${remainingBookBalance <= 0 ? 'text-slate-400' : 'text-white'}`}>{remainingBookBalance.toLocaleString()} كرتون</span>
+                        <span className={`text-[10px] font-black ${remainingBookBalance <= 0 ? 'text-slate-400/60' : 'text-emerald-100/80'}`}>{remainingBookBundles.toLocaleString()} حزمة</span>
+                      </div>
                     </div>
                   </div>
 
@@ -2232,6 +2395,19 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         cancelText="تراجع"
       />
       <ConfirmModal
+        isOpen={showRestoreTripModal}
+        title="استعادة الرحلة الملغاة"
+        message={`⚠️ هل أنت متأكد من استعادة الرحلة رقم #${trips.find(t => t.id === tripIdToRestore)?.tripNumber}؟\nسيتم إعادة الرحلة وجميع طبلياتها المرتبطة إلى النظام بحالتها السابقة.`}
+        type="info"
+        onConfirm={confirmRestoreTrip}
+        onCancel={() => {
+          setShowRestoreTripModal(false);
+          setTripIdToRestore(null);
+        }}
+        confirmText="نعم، استعادة الرحلة"
+        cancelText="إلغاء"
+      />
+      <ConfirmModal
         isOpen={showRevertModal}
         title="تأكيد التراجع عن العملية"
         message="هل أنت متأكد من التراجع عن هذه الرحلة (تنفيذ أو إطلاق)؟ سيتم إعادتها إلى قائمة الرحلات المخططة وتصحيح رصيد المخزون فوراً."
@@ -2255,6 +2431,66 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         confirmText="حذف نهائي"
         cancelText="إلغاء"
       />
+
+      {showBalanceDetailModal && selectedCenterForBalance && (
+        <div className="fixed inset-0 z-[6000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl border-4 border-indigo-900 overflow-hidden">
+            <div className="bg-indigo-900 p-6 text-center">
+               <h3 className="text-xl font-black text-white">تفاصيل الرصيد المتبقي الحر</h3>
+               <p className="text-indigo-100 text-xs font-bold mt-1">{selectedCenterForBalance.name}</p>
+            </div>
+            <div className="p-4 bg-emerald-50 border-b border-emerald-100">
+               <p className="text-[10px] font-black text-emerald-800 text-center leading-relaxed">
+                 💡 يتم تحويل إجمالي الحزم المتبقية لكل مرحلة إلى كراتين كاملة وما تبقى يظهر كحزم لضمان دقة الرصيد.
+               </p>
+            </div>
+            <div className="p-6 max-h-[50vh] overflow-y-auto custom-scrollbar">
+               <div className="space-y-2">
+                  {selectedCenterForBalance.details.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 font-bold">لا يوجد رصيد متبقي</div>
+                  ) : (
+                    <div className="overflow-hidden rounded-2xl border border-slate-100">
+                      <table className="w-full text-right text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-100">
+                          <tr>
+                            <th className="px-3 py-2 font-black text-slate-500">المرحلة</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">كرتون</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">حزمة</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {selectedCenterForBalance.details.map((item, idx) => (
+                            <tr key={idx}>
+                              <td className="px-3 py-2 font-black text-slate-700">{item.stageName}</td>
+                              <td className="px-3 py-2 text-center">
+                                <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-lg font-black">
+                                  {item.remainingCartons.toLocaleString()}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                <span className={`px-2 py-0.5 rounded-lg font-black ${item.remainingBundles > 0 ? 'bg-amber-50 text-amber-600' : 'text-slate-300'}`}>
+                                  {item.remainingBundles.toLocaleString()}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+               </div>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100">
+               <button 
+                 onClick={() => { setShowBalanceDetailModal(false); setSelectedCenterForBalance(null); }}
+                 className="w-full bg-slate-900 text-white p-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg"
+               >
+                 إغلاق
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showEmptyCartonsModal && selectedCenterForEmpty && (
         <div className="fixed inset-0 z-[6000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">

@@ -37,9 +37,21 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
     const unique = new Map();
-    centers.forEach(c => {
+    const sortedCenters = [...centers].sort((a, b) => {
+      const aHasLocation = a.locationName && a.locationName.trim() !== '';
+      const bHasLocation = b.locationName && b.locationName.trim() !== '';
+      if (aHasLocation && !bHasLocation) return -1;
+      if (!aHasLocation && bHasLocation) return 1;
+      return 0;
+    });
+
+    sortedCenters.forEach(c => {
       if(!unique.has(c.code)) {
-        unique.set(c.code, { ...c, displayName: c.locationName || c.displayName });
+        let finalName = c.locationName || c.displayName;
+        if (c.code === 'DMM' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الدمام';
+        if (c.code === 'RYD' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الرياض';
+        if (c.code === 'JED' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز جدة';
+        unique.set(c.code, { ...c, displayName: finalName });
       }
     });
     return Array.from(unique.values());
