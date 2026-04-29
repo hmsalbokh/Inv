@@ -51,6 +51,7 @@ export interface InventoryRecord {
   missingCartons?: number;
   isExtraOnly?: boolean;
   localOnly?: boolean; 
+  cancelledAt?: number;
 }
 
 export interface Trip {
