@@ -160,7 +160,10 @@ export const App: React.FC = () => {
 
     // مستمع المراحل
     const unsubTypes = onSnapshot(collection(db, 'palletTypes'), (snapshot) => {
-      const types = snapshot.docs.map(doc => doc.data() as PalletType);
+      const types = snapshot.docs.map(doc => {
+        const data = doc.data() as PalletType;
+        return { ...data, id: data.id || doc.id };
+      });
       setPalletTypes(types);
     });
 
@@ -171,7 +174,10 @@ export const App: React.FC = () => {
       orderBy('startDate', 'desc')
     );
     const unsubTrips = onSnapshot(tripsQuery, (snapshot) => {
-      const tripsData = snapshot.docs.map(doc => doc.data() as Trip);
+      const tripsData = snapshot.docs.map(doc => {
+        const data = doc.data() as Trip;
+        return { ...data, id: data.id || doc.id };
+      });
       setTrips(tripsData);
     }, (error) => console.error("Trips survey error:", error));
 
@@ -182,7 +188,10 @@ export const App: React.FC = () => {
       orderBy('timestamp', 'desc')
     );
     const unsubRecords = onSnapshot(recordsQuery, (snapshot) => {
-      const recordsData = snapshot.docs.map(doc => doc.data() as InventoryRecord);
+      const recordsData = snapshot.docs.map(doc => {
+        const data = doc.data() as InventoryRecord;
+        return { ...data, id: data.id || doc.id };
+      });
       setRecords(recordsData);
     }, (error) => console.error("Records survey error:", error));
 
@@ -198,7 +207,10 @@ export const App: React.FC = () => {
 
     // مستمع رحلات التوزيع
     const unsubDistTrips = onSnapshot(collection(db, 'distributionTrips'), (snapshot) => {
-      const distData = snapshot.docs.map(doc => doc.data() as DistributionTrip);
+      const distData = snapshot.docs.map(doc => {
+        const data = doc.data() as DistributionTrip;
+        return { ...data, id: data.id || doc.id };
+      });
       setDistributionTrips(distData);
     }, (error) => console.error("DistTrips error:", error));
 
@@ -683,7 +695,7 @@ export const App: React.FC = () => {
           />
         )}
         {activeTab === 'scan' && <Scanner onScan={handleScan} role={currentUser.role} currentTruck={currentTruckNumber} onTruckChange={setCurrentTruckNumber} currentTripId={currentTripId} records={records} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} palletTypes={palletTypes} onNotify={(title, msg) => setShowNotification({ title, msg })} />}
-        {activeTab === 'history' && <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} />}
+        {activeTab === 'history' && <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} onNotify={(title, msg) => setShowNotification({ title, msg })} />}
         {activeTab === 'settings' && currentUser.code === 'ADMIN' && (
           <Settings 
             palletTypes={palletTypes} 

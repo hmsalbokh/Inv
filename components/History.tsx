@@ -14,11 +14,12 @@ interface Props {
   userCode: string;
   userCenter: CenterCode | null;
   users: UserCredentials[]; // إضافة قائمة المستخدمين
+  onNotify?: (title: string, msg: string) => void;
 }
 
 type LabelSize = '10x15' | '3x4';
 
-export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users }) => {
+export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending'>('ALL');
   const [showDamagedOnly, setShowDamagedOnly] = useState(false);
@@ -27,12 +28,77 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const [selectedSize, setSelectedSize] = useState<LabelSize>('10x15');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkCancelling, setIsBulkCancelling] = useState(false);
+
+  const isAdmin = useMemo(() => userCode === 'ADMIN' || (role as string) === 'admin', [userCode, role]);
+
+  const toggleSelection = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newSelection = new Set(selectedIds);
+    if (newSelection.has(id)) {
+      newSelection.delete(id);
+    } else {
+      newSelection.add(id);
+    }
+    setSelectedIds(newSelection);
+  };
+
+  const handleBulkCancel = async () => {
+    if (selectedIds.size === 0) return;
+    
+    const confirmMsg = `⚠️ تحذير: هل أنت متأكد من إلغاء ${selectedIds.size} لصيقة محددة؟\nسيتم استبعادها جميعاً من المخزون والإحصائيات.`;
+    
+    if (window.confirm(confirmMsg)) {
+      setIsBulkCancelling(true);
+      try {
+        const batchSize = 10; // Batch size for sequential processing or use writeBatch
+        const ids = Array.from(selectedIds);
+        
+        for (let i = 0; i < ids.length; i++) {
+           const id = ids[i];
+           const record = records.find(r => r.id === id);
+           if (!record || record.status === 'cancelled') continue;
+
+           await updateDoc(doc(db, 'records', id), {
+             status: 'cancelled',
+             cancelledAt: Date.now()
+           });
+
+           await addDoc(collection(db, 'system_logs'), {
+             timestamp: Date.now(),
+             type: 'system_error',
+             userId: userCode || 'مجهول',
+             message: 'إلغاء لصيقة (جماعي)',
+             details: `تم إلغاء اللصيقة رقم (${record.palletBarcode}) ضمن عملية إلغاء جماعي.`
+           });
+        }
+
+        if (onNotify) {
+          onNotify('نجاح الإلغاء', `تم إلغاء ${selectedIds.size} لصيقة بنجاح.`);
+        }
+        setSelectedIds(new Set());
+      } catch (err) {
+        console.error('Bulk cancel failed', err);
+        if (onNotify) onNotify('خطأ', 'فشل الإلغاء الجماعي لبعض السجلات.');
+      } finally {
+        setIsBulkCancelling(false);
+      }
+    }
+  };
 
   // جلب اسم المنشأة ديناميكياً
   const getEntityName = (code: string) => {
      const u = users.find(u => u.code === code);
      if (!u) return code;
      let name = u.locationName || u.displayName;
+
+     // Explicit fixes for main centers
+     if (u.code === 'DMM' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز الدمام';
+     if (u.code === 'RYD' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز الرياض';
+     if (u.code === 'JED' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز جدة';
+
      if (name.includes(' - ')) {
        const parts = name.split(' - ');
        return parts[1].trim();
@@ -240,6 +306,44 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
     }
   };
 
+  const handleCancelRecord = async (record: InventoryRecord) => {
+    const confirmMsg = `⚠️ تحذير: هل أنت متأكد من إلغاء هذه اللصيقة (${record.palletBarcode})؟\nلن تحتسب هذه اللصيقة في جرد المخزون أو الإحصائيات.`;
+    
+    if (window.confirm(confirmMsg)) {
+      setIsCancelling(record.id);
+      try {
+        console.log(`Cancelling record: ${record.id}`);
+        await updateDoc(doc(db, 'records', record.id), {
+          status: 'cancelled',
+          cancelledAt: Date.now()
+        });
+
+        await addDoc(collection(db, 'system_logs'), {
+          timestamp: Date.now(),
+          type: 'system_error',
+          userId: userCode || 'مجهول',
+          message: 'إلغاء لصيقة سجل',
+          details: `تم إلغاء اللصيقة رقم (${record.palletBarcode}) بواسطة مسؤول النظام (الحالة السابقة: ${record.status}).`
+        });
+
+        if (onNotify) {
+          onNotify('تم الإلغاء', 'تم إلغاء اللصيقة بنجاح من النظام والمخزون.');
+        } else {
+          alert('تم إلغاء اللصيقة بنجاح.');
+        }
+      } catch (err) {
+        console.error('Failed to cancel record:', err);
+        if (onNotify) {
+          onNotify('خطأ', 'فشل إلغاء اللصيقة. يرجى التحقق من الصلاحيات.');
+        } else {
+          alert('حدث خطأ أثناء محاولة إلغاء اللصيقة.');
+        }
+      } finally {
+        setIsCancelling(null);
+      }
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fadeIn pb-24 text-right" dir="rtl">
       {previewImageUrl && (
@@ -279,7 +383,18 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
           <h2 className="text-xl font-black text-slate-800">
              {role === 'center' ? `سجل استلام ${getEntityName(userCenter || '')}` : 'سجل التحركات'}
           </h2>
-          <span className="bg-slate-200 text-slate-700 px-3 py-1 rounded-full text-[10px] font-black">{filteredRecords.length} سجل</span>
+          <div className="flex items-center gap-2">
+            {isAdmin && selectedIds.size > 0 && (
+              <button 
+                onClick={handleBulkCancel}
+                disabled={isBulkCancelling}
+                className="bg-rose-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black shadow-lg animate-bounce animate-once"
+              >
+                {isBulkCancelling ? 'جاري الإلغاء...' : `إلغاء (${selectedIds.size}) لصائق`}
+              </button>
+            )}
+            <span className="bg-slate-200 text-slate-700 px-3 py-1 rounded-full text-[10px] font-black">{filteredRecords.length} سجل</span>
+          </div>
         </div>
         
         <div className="flex flex-col gap-2 pb-2">
@@ -320,12 +435,21 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
             const trip = trips.find(t => t.id === record.tripId);
 
             return (
-              <div key={record.id} className={`bg-white rounded-[2.5rem] shadow-sm border transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-2 ring-indigo-500 border-transparent' : 'border-slate-100'}`}>
+              <div key={record.id} className={`bg-white rounded-[2.5rem] shadow-sm border transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-2 ring-indigo-500 border-transparent' : 'border-slate-100'} ${selectedIds.has(record.id) ? 'bg-indigo-50/50' : ''}`}>
                 <div onClick={() => setExpandedId(isExpanded ? null : record.id)} className={`p-6 flex justify-between items-center cursor-pointer active:bg-slate-50 ${isExpanded ? 'bg-indigo-50/30' : 'bg-white'}`}>
-                  <div className="text-right space-y-1">
-                    <h3 className="text-sm font-black text-slate-800">{pType?.stageName}</h3>
-                    <div className="flex flex-wrap items-center gap-2">
-                       <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-widest">{record.palletBarcode}</span>
+                  <div className="flex items-center gap-4">
+                    {isAdmin && record.status !== 'cancelled' && (
+                      <div 
+                        onClick={(e) => toggleSelection(record.id, e)}
+                        className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${selectedIds.has(record.id) ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200'}`}
+                      >
+                        {selectedIds.has(record.id) && <span className="text-[10px]">✓</span>}
+                      </div>
+                    )}
+                    <div className="text-right space-y-1">
+                      <h3 className="text-sm font-black text-slate-800">{pType?.stageName}</h3>
+                      <div className="flex flex-wrap items-center gap-2">
+                         <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-widest">{record.palletBarcode}</span>
                        {record.extraCartons && (
                          <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">
                            {record.isExtraOnly ? `${record.extraCartons} كرتون إضافي فقط` : `+ ${record.extraCartons} كراتين إضافية`}
@@ -340,13 +464,18 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${
                          record.status === 'received' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
                          record.status === 'in_transit' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 
+                         record.status === 'cancelled' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                          'bg-slate-50 text-slate-400 border border-slate-100'
                        }`}>
-                         {record.status === 'received' ? 'تم الاستلام ✓' : record.status === 'in_transit' ? 'في الطريق 🚚' : 'بانتظار التحميل'}
+                         {record.status === 'received' ? 'تم الاستلام ✓' : 
+                          record.status === 'in_transit' ? 'في الطريق 🚚' : 
+                          record.status === 'cancelled' ? '⚠️ ملغاة' :
+                          'بانتظار التحميل'}
                        </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                </div>
+                <div className="flex items-center gap-2">
                     <button onClick={(e) => { e.stopPropagation(); setActiveChoiceId(record.id); }} className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center shadow-sm active:scale-95 transition-all text-sm">🖨️</button>
                     <span className={`text-xs transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
                   </div>
@@ -355,12 +484,32 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                 {isExpanded && (
                   <div className="px-6 pb-6 pt-2 space-y-4 animate-slideDown border-t border-slate-50">
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-slate-50 p-3 rounded-2xl">
-                         <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الحالة</span>
-                         <span className={`text-[10px] font-bold block text-right ${record.status === 'received' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                           {record.status === 'received' ? 'تم الاستلام ✓' : record.status === 'in_transit' ? 'في الطريق 🚚' : 'بانتظار التحميل'}
-                         </span>
-                      </div>
+                     {record.status === 'cancelled' ? (
+                        <div className="bg-rose-50 p-3 rounded-2xl text-right border border-rose-100">
+                           <span className="text-[9px] font-black text-rose-400 block uppercase mb-1">الحالة</span>
+                           <span className="text-[10px] font-bold block text-rose-700">
+                             ملغاة ⚠️
+                           </span>
+                           {record.cancelledAt && (
+                             <span className="text-[8px] font-bold text-rose-500 mt-1 block">
+                               تم الإلغاء في: {formatDateTime(record.cancelledAt)}
+                             </span>
+                           )}
+                        </div>
+                       ) : (
+                        <div className="bg-slate-50 p-3 rounded-2xl text-right">
+                           <span className="text-[9px] font-black text-slate-400 block uppercase mb-1">الحالة</span>
+                           <span className={`text-[10px] font-bold block ${
+                             record.status === 'received' ? 'text-emerald-600' : 
+                             record.status === 'in_transit' ? 'text-amber-600' : 
+                             'text-slate-400'
+                           }`}>
+                             {record.status === 'received' ? 'تم الاستلام ✓' : 
+                              record.status === 'in_transit' ? 'في الطريق 🚚' : 
+                              'بانتظار التحميل'}
+                           </span>
+                        </div>
+                       )}
                       <div className="bg-slate-50 p-3 rounded-2xl">
                          <span className="text-[9px] font-black text-slate-400 block uppercase mb-1 text-right">الوجهة</span>
                          <span className="text-[10px] font-bold text-slate-800 block text-right">{getEntityName(record.destination)}</span>
@@ -459,6 +608,32 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                          className="w-full bg-amber-50 text-amber-700 border border-amber-100 py-3 rounded-2xl text-[10px] font-black flex items-center justify-center gap-2 active:scale-95 transition-all mt-2"
                        >
                          <span>⚡ إجبار التمرير وتخطي المسح (لحلول خلل النظام المباشرة)</span>
+                       </button>
+                    )}
+
+                    {isAdmin && record.status !== 'cancelled' && (
+                       <button 
+                         disabled={isCancelling === record.id}
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           handleCancelRecord(record);
+                         }}
+                         className={`w-full py-3 rounded-2xl text-[10px] font-black flex items-center justify-center gap-2 active:scale-95 transition-all mt-2 ${
+                           isCancelling === record.id 
+                           ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                           : 'bg-rose-50 text-rose-700 border border-rose-100'
+                         }`}
+                       >
+                         {isCancelling === record.id ? (
+                           <>
+                             <div className="w-3 h-3 border-2 border-rose-700 border-t-transparent rounded-full animate-spin"></div>
+                             <span>جاري الإلغاء...</span>
+                           </>
+                         ) : (
+                           <>
+                             <span>🚫 إلغاء هذه اللصيقة (مسؤول النظام فقط)</span>
+                           </>
+                         )}
                        </button>
                     )}
 

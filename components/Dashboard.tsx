@@ -896,6 +896,21 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           const typeInCenter = receivedRecords.filter(r => r.palletTypeId === type.id);
           const plannedQty = stats.plannedOutbound[center.code]?.[type.id] || 0;
           
+          // حساب الكميات المصدرة لهذه المرحلة
+          let typeExportedCartons = 0;
+          let typeExportedBundles = 0;
+          const centerExecutedTrips = distributionTrips.filter(t => 
+            t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+            (t.status === 'executed' || t.status === 'dispatched')
+          );
+          centerExecutedTrips.forEach(et => {
+            const q = (et.executedQuantities || et.quantities).find(qty => qty.palletTypeId === type.id);
+            if (q) {
+              typeExportedCartons += q.cartonCount;
+              typeExportedBundles += (q.bundleCount || 0);
+            }
+          });
+
           const palletCount = typeInCenter.length;
 
           let totalCartons = 0;
@@ -944,8 +959,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               'عدد الطبليات (المستلمة)': palletCount,
               'التباين (كرتون)': diffCartons,
               'التباين (حزمة)': diffBundles,
-              'إجمالي الكراتين': totalCartons,
-              'إجمالي الحزم': totalBundles,
+              'إجمالي الكراتين المستلمة': totalCartons,
+              'إجمالي الحزم المستلمة': totalBundles,
+              'تم تصديره (كرتون)': typeExportedCartons,
+              'تم تصديره (حزمة)': typeExportedBundles,
               'مخطط صرفه (كرتون)': plannedQty,
               'المخزون المتبقي (كرتون)': remaining,
               'المخزون المتبقي (حزمة)': remaining * type.bundlesPerCarton,
@@ -1900,7 +1917,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                       emptyBreakdownMap[type.stageName] = (emptyBreakdownMap[type.stageName] || 0) - q.cartonCount;
                     } else {
                       exportedBookCartons += q.cartonCount;
-                      exportedBookBundles += (q.cartonCount * type.bundlesPerCarton) + (q.bundleCount || 0);
+                      exportedBookBundles += (q.bundleCount || 0);
                     }
                   }
                 });
@@ -1955,7 +1972,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   <div className="grid grid-cols-2 gap-2">
                     <div className="bg-indigo-50 border border-indigo-100 p-2 rounded-2xl text-center flex flex-col justify-center">
                       <span className="text-[8px] font-black text-indigo-400 uppercase block">تم التصدير (خروج)</span>
-                      <span className="text-sm font-black text-indigo-900">{exportedBookCartons.toLocaleString()} كرتون</span>
+                      <div className="flex flex-col items-center">
+                        <span className="text-sm font-black text-indigo-900">{exportedBookCartons.toLocaleString()} كرتون</span>
+                        <span className="text-[10px] font-black text-indigo-700/70">{exportedBookBundles.toLocaleString()} حزمة</span>
+                      </div>
                     </div>
                     <div 
                       onClick={() => {
