@@ -22,6 +22,9 @@ type LabelSize = '10x15' | '3x4';
 export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending'>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateFilter, setDateFilter] = useState('');
+  const [palletTypeFilter, setPalletTypeFilter] = useState<string | 'ALL'>('ALL');
   const [showDamagedOnly, setShowDamagedOnly] = useState(false);
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
   const [batchPrintTripId, setBatchPrintTripId] = useState<string | null>(null);
@@ -175,13 +178,39 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       else if (role === 'factory') isVisible = record.palletBarcode.includes(userCode);
       else if (role === 'center' && userCenter) isVisible = record.destination === userCenter;
       
+      const trip = trips.find(t => t.id === record.tripId);
+      
       if (isVisible && role !== 'center' && destinationFilter !== 'ALL') isVisible = record.destination === destinationFilter;
       if (isVisible && statusFilter !== 'ALL') isVisible = record.status === statusFilter;
       if (isVisible && showDamagedOnly) isVisible = (record.condition && record.condition !== 'intact') || record.hasDiscrepancy;
       
+      // Search Filter
+      if (isVisible && searchQuery) {
+        const query = searchQuery.toLowerCase().trim();
+        const barcodeMatch = record.palletBarcode.toLowerCase().includes(query);
+        const tripNumMatch = trip?.tripNumber.toLowerCase().includes(query);
+        isVisible = barcodeMatch || tripNumMatch;
+      }
+      
+      // Date Filter
+      if (isVisible && dateFilter) {
+        const recordDate = new Date(record.timestamp).toISOString().split('T')[0];
+        isVisible = recordDate === dateFilter;
+      }
+
+      // Pallet Type Filter
+      if (isVisible && palletTypeFilter !== 'ALL') {
+        isVisible = record.palletTypeId === palletTypeFilter;
+      }
+      
       return isVisible;
-    }).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  }, [records, role, userCode, userCenter, destinationFilter, statusFilter, showDamagedOnly]);
+    }).sort((a, b) => {
+      const timeA = a.timestamp || 0;
+      const timeB = b.timestamp || 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return b.id.localeCompare(a.id); // التحقق من المعرف للثبات في حال تطابق الوقت
+    });
+  }, [records, role, userCode, userCenter, destinationFilter, statusFilter, showDamagedOnly, searchQuery, dateFilter, palletTypeFilter, trips]);
 
   const generateLabelHTML = (record: InventoryRecord, size: LabelSize) => {
     const pType = palletTypes.find(t => t.id === record.palletTypeId);
@@ -397,7 +426,56 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
           </div>
         </div>
         
-        <div className="flex flex-col gap-2 pb-2">
+        <div className="flex flex-col gap-3 pb-2">
+          {/* Search Bar */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="البحث برقم الباركود أو رقم الرحلة..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 px-10 text-xs font-bold text-slate-800 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 transition-all text-right"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+            {searchQuery && (
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-500"
+              >✕</button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 items-center">
+            {/* Date Filter */}
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 min-w-fit">
+              <span className="text-[9px] font-black text-slate-400">التاريخ:</span>
+              <input 
+                type="date" 
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+                className="bg-transparent text-[10px] font-black text-slate-700 focus:outline-none"
+              />
+              {dateFilter && (
+                <button onClick={() => setDateFilter('')} className="text-slate-400 text-xs hover:text-rose-500">✕</button>
+              )}
+            </div>
+
+            {/* Pallet Type Filter */}
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex-1 min-w-fit overflow-hidden">
+               <span className="text-[9px] font-black text-slate-400 whitespace-nowrap">النوع:</span>
+               <select 
+                 value={palletTypeFilter}
+                 onChange={(e) => setPalletTypeFilter(e.target.value)}
+                 className="bg-transparent text-[10px] font-black text-slate-700 focus:outline-none w-full"
+               >
+                 <option value="ALL">الكل</option>
+                 {palletTypes.map(t => (
+                   <option key={t.id} value={t.id}>{t.stageName}</option>
+                 ))}
+               </select>
+            </div>
+          </div>
+
           {role !== 'center' && (
             <div className="flex gap-2 overflow-x-auto no-scrollbar items-center border-b border-slate-100 pb-2">
               <span className="text-[10px] font-black text-slate-400 whitespace-nowrap ml-1">المركز:</span>
@@ -417,6 +495,20 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
             <div className="w-px h-6 bg-slate-200 mx-1 flex-shrink-0"></div>
             
             <button onClick={() => setShowDamagedOnly(!showDamagedOnly)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${showDamagedOnly ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 border border-rose-100 text-rose-600'}`}>⚠️ المتضرر</button>
+
+            <button 
+              onClick={() => {
+                setSearchQuery('');
+                setDateFilter('');
+                setPalletTypeFilter('ALL');
+                setStatusFilter('ALL');
+                setDestinationFilter('ALL');
+                setShowDamagedOnly(false);
+              }}
+              className="px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all bg-slate-100 text-slate-500 hover:bg-slate-200"
+            >
+              🔄 إعادة ضبط
+            </button>
           </div>
         </div>
       </div>
@@ -555,14 +647,6 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                                    </span>
                                  )}
                                </div>
-                               {record.factoryTimestamp && (trip?.startDate || record.timestamp) && (
-                                 <div className="mt-2 flex items-center gap-1 text-[8px] font-bold text-amber-600 bg-amber-50 w-fit px-2 py-1 rounded-lg">
-                                    <span>⏱️ مدة التجهيز:</span>
-                                    <span className="font-black underline decoration-amber-200 decoration-2 underline-offset-2">
-                                      {formatDuration(record.factoryTimestamp - (trip?.startDate || record.timestamp))}
-                                    </span>
-                                 </div>
-                               )}
                             </div>
                           </div>
 
