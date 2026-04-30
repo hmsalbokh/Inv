@@ -2208,7 +2208,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                         className={`${hasShortage ? 'bg-slate-300 cursor-not-allowed text-slate-500' : isOverdue ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white px-3 py-1.5 rounded-xl text-[8px] font-black transition-all shadow-sm`}
                                         disabled={hasShortage}
                                       >
-                                        إطلاق الشحنة 🚀
+                                        إطلاق
                                       </button>
                                     )}
                                   </div>
