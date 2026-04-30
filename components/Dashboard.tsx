@@ -211,6 +211,34 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     items: { stageName: string; cartons: number }[];
   } | null>(null);
 
+  // Consolidated trips to handle duplicates in the database (favoring most advanced status)
+  const consolidatedTrips = useMemo(() => {
+    const grouped = new Map<string, DistributionTrip>();
+    distributionTrips.forEach(t => {
+      // Clean the trip number to handle hidden characters or variations in spacing
+      const cleanNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '').toLowerCase();
+      const cleanOrigin = (t.originCenter || '').trim().toLowerCase();
+      const key = `${cleanNum}_${cleanOrigin}`;
+      
+      const existing = grouped.get(key);
+      if (!existing) {
+        grouped.set(key, t);
+      } else {
+        const statusPriority: Record<string, number> = { 'executed': 3, 'dispatched': 2, 'planned': 1 };
+        const currentPrio = statusPriority[t.status] || 0;
+        const existingPrio = statusPriority[existing.status] || 0;
+        
+        if (currentPrio > existingPrio) {
+          grouped.set(key, t);
+        } else if (currentPrio === existingPrio) {
+          // If statuses are equal, prefer the more recently updated (if we had a timestamp)
+          // or just keep the first one found.
+        }
+      }
+    });
+    return Array.from(grouped.values());
+  }, [distributionTrips]);
+
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
     const uniqueCenters = new Map();
@@ -303,14 +331,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           const rawTripNumber = row['رقم الرحلة'] || row['tripNumber'];
           if (!rawTripNumber) return;
           
-          const tripNumber = String(rawTripNumber).trim();
+          const tripNumber = String(rawTripNumber).trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
           if (processedNumbers.has(tripNumber)) return;
           processedNumbers.add(tripNumber);
           
           // البحث عن رحلة موجودة بنفس الرقم لمنع التكرار (بغض النظر عن الحالة)
-          const existingTrip = distributionTrips.find(t => 
-            t.tripNumber.trim().toLowerCase() === tripNumber.toLowerCase()
-          );
+          const existingTrip = distributionTrips.find(t => {
+            const dbNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+            return dbNum.toLowerCase() === tripNumber.toLowerCase();
+          });
 
           const quantities = palletTypes.map(type => {
             const cartons = Number(row[type.stageCode] || 0);
@@ -364,7 +393,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   };
 
   const handleDownloadExecutionTemplate = () => {
-    const plannedTrips = distributionTrips.filter(t => t.status === 'planned' || t.status === 'dispatched');
+    const plannedTrips = consolidatedTrips.filter(t => t.status === 'planned' || t.status === 'dispatched');
     if (plannedTrips.length === 0) {
       onNotify('تنبيه', 'لا توجد رحلات مخططة حالياً لتوليد قالب لها');
       return;
@@ -394,6 +423,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   };
 
   const handleActualExecutionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAdmin) {
+      onNotify('خطأ', 'غير مصرح لك بتنفيذ هذه العملية');
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -410,7 +443,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         const batch = writeBatch(db);
         let matchCount = 0;
 
-        const allSystemTrips = distributionTrips.map(t => t.tripNumber.trim().toLowerCase());
+        const allSystemTrips = consolidatedTrips.map(t => t.tripNumber.trim().toLowerCase());
         console.log("Actual Upload Debug: Total rows in Excel:", data.length);
         console.log("Actual Upload Debug: System trip numbers (lowercase):", allSystemTrips);
         
@@ -446,7 +479,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           console.log(`Actual Upload Debug: Attempting match for [${cleanRowNumber}]`);
 
           // Find if this trip already exists - robust string matching
-          const existingTrip = distributionTrips.find(t => {
+          const existingTrip = consolidatedTrips.find(t => {
             const dbTripNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
             
             // Case-insensitive exact string match
@@ -551,12 +584,16 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   };
   
   const handleManualExecutionSubmit = async () => {
+    if (!isAdmin) {
+      onNotify('خطأ', 'غير مصرح لك بتنفيذ هذه العملية');
+      return;
+    }
     if (!executionData.tripId || !executionData.date) {
       onNotify('تنبيه', 'يرجى اختيار الرحلة وتحديد تاريخ التنفيذ');
       return;
     }
 
-    const existingTrip = distributionTrips.find(t => t.id === executionData.tripId);
+    const existingTrip = consolidatedTrips.find(t => t.id === executionData.tripId);
     if (!existingTrip) return;
 
     const executedQuantities = Object.entries(executionData.quantities)
@@ -739,7 +776,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     try {
       if (editingTripId) {
         await updateDoc(doc(db, 'distributionTrips', editingTripId), {
-          tripNumber: distTripData.tripNumber,
+          tripNumber: distTripData.tripNumber.trim(),
           date: distTripData.date,
           originCenter: distTripData.originCenter,
           destinationCity: distTripData.destinationCity,
@@ -747,10 +784,23 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         });
         onNotify('نجاح', 'تم تحديث الرحلة بنجاح');
       } else {
+        const cleanNumber = distTripData.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+        
+        // التحقق من تكرار رقم الرحلة
+        const isDuplicate = distributionTrips.some(t => {
+           const dbNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+           return dbNum.toLowerCase() === cleanNumber.toLowerCase();
+        });
+        
+        if (isDuplicate) {
+          onNotify('خطأ', `رقم الرحلة (${distTripData.tripNumber}) موجود مسبقاً في النظام`);
+          return;
+        }
+
         const id = generateUUID();
         const newTrip: DistributionTrip = {
           id,
-          tripNumber: distTripData.tripNumber,
+          tripNumber: cleanNumber,
           date: distTripData.date,
           originCenter: distTripData.originCenter,
           destinationCity: distTripData.destinationCity,
@@ -816,7 +866,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
       if (isDateFiltered) {
         // Mode: Trips with deficit in date range
-        const centerTrips = distributionTrips
+        const centerTrips = consolidatedTrips
           .filter(t => t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase())
           .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -1337,16 +1387,20 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 ➕ إضافة رحلة يدوياً
               </button>
               <div className="flex gap-1">
-                <label className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95 cursor-pointer">
-                  {isUploadingActual ? 'جاري الرفع...' : '✅ رفع تقرير التنفيذ الفعلي'}
-                  <input type="file" accept=".xlsx, .xls" onChange={handleActualExecutionUpload} className="hidden" disabled={isUploadingActual} />
-                </label>
-                <button onClick={() => setShowExecutionManualForm(true)} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95">
-                  ✏️ إدخال التنفيذ يدوياً
-                </button>
-                <button onClick={handleDownloadExecutionTemplate} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95" title="تحميل قالب الرحلات المخططة">
-                  📄 تحميل قالب التنفيذ المخطط
-                </button>
+                {isAdmin && (
+                  <>
+                    <label className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95 cursor-pointer">
+                      {isUploadingActual ? 'جاري الرفع...' : '✅ رفع تقرير التنفيذ الفعلي'}
+                      <input type="file" accept=".xlsx, .xls" onChange={handleActualExecutionUpload} className="hidden" disabled={isUploadingActual} />
+                    </label>
+                    <button onClick={() => setShowExecutionManualForm(true)} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95">
+                      ✏️ إدخال التنفيذ يدوياً
+                    </button>
+                    <button onClick={handleDownloadExecutionTemplate} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95" title="تحميل قالب الرحلات المخططة">
+                      📄 تحميل قالب التنفيذ المخطط
+                    </button>
+                  </>
+                )}
                 <label className="px-6 py-2.5 rounded-2xl bg-emerald-500/20 backdrop-blur-md border border-emerald-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-emerald-500/30 transition-all active:scale-95 cursor-pointer">
                   {isUploadingExcel ? 'جاري الرفع...' : '📊 رفع خطة التوزيع'}
                   <input type="file" accept=".xlsx, .xls" onChange={handleExcelUpload} className="hidden" disabled={isUploadingExcel} />
@@ -1903,7 +1957,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               let exportedBookCartons = 0;
               let exportedBookBundles = 0;
               let exportedEmptyCartons = 0;
-              const centerExecutedTripsForCalc = distributionTrips.filter(t => 
+              const centerExecutedTripsForCalc = consolidatedTrips.filter(t => 
                 t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
                 (t.status === 'executed' || t.status === 'dispatched')
               );
@@ -1927,7 +1981,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               const remainingBookBundles = centerBundles - exportedBookBundles;
               const remainingEmptyBalance = centerEmptyCartons - exportedEmptyCartons;
 
-              const centerPlannedTrips = distributionTrips
+              const centerPlannedTrips = consolidatedTrips
                 .filter(t => 
                   t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
                   t.status === 'planned'
@@ -2090,7 +2144,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                             });
                             
                             // خصم الرحلات المنفذة أو المرسلة فعلياً لكي يظهر الرصيد المتبقي بشكل دقيق
-                            const centerExecutedTrips = distributionTrips.filter(t => 
+                            const centerExecutedTrips = consolidatedTrips.filter(t => 
                               t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
                               t.status !== 'planned'
                             );
@@ -2154,7 +2208,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                                         className={`${hasShortage ? 'bg-slate-300 cursor-not-allowed text-slate-500' : isOverdue ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white px-3 py-1.5 rounded-xl text-[8px] font-black transition-all shadow-sm`}
                                         disabled={hasShortage}
                                       >
-                                        إطلاق
+                                        إطلاق الشحنة 🚀
                                       </button>
                                     )}
                                   </div>
@@ -2181,7 +2235,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   <div className="space-y-2 pt-4 border-t border-slate-100">
                     <span className="text-[9px] font-black text-slate-500 uppercase block mr-1">✅ تم تنفيذه وشحنه:</span>
                     {(() => {
-                      const centerExecutedTrips = distributionTrips
+                      const centerExecutedTrips = consolidatedTrips
                         .filter(t => 
                           t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
                           (t.status === 'executed' || t.status === 'dispatched')
