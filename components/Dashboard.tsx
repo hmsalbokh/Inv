@@ -5,7 +5,7 @@ import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, Use
 import { analyzeInventory } from '../services/geminiService';
 import * as XLSX from 'xlsx';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc, deleteField } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc, deleteField, getDoc, addDoc } from 'firebase/firestore';
 
 interface Props {
   palletTypes: PalletType[];
@@ -1096,25 +1096,51 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     if (!trip) return;
 
     try {
+      console.log(`Restoring trip: ${tripIdToRestore}`);
+      // جلب بيانات الرحلة من الخادم للتأكد من حالتها
+      const tripRef = doc(db, 'trips', tripIdToRestore);
+      const tripSnap = await getDoc(tripRef);
+      
+      if (!tripSnap.exists()) {
+        throw new Error('الرحلة غير موجودة في قاعدة البيانات');
+      }
+
       const tripRecords = records.filter(r => r.tripId === tripIdToRestore);
       const batch = writeBatch(db);
       
       // إعادة الرحلة لحالة النشاط
-      batch.update(doc(db, 'trips', tripIdToRestore), { status: 'active' });
+      batch.update(tripRef, { 
+        status: 'active',
+        cancelledAt: deleteField()
+      });
       
       // إعادة كل طبلية لحالتها السابقة قبل الإلغاء
-      // إذا كانت قد مسحت في المطبعة تعود لـ in_transit وإلا pending
       tripRecords.forEach(r => {
-        const newStatus = r.factoryTimestamp ? 'in_transit' : 'pending';
-        batch.update(doc(db, 'records', r.id), { status: newStatus });
+        const newStatus = r.centerTimestamp ? 'received' : (r.factoryTimestamp ? 'in_transit' : 'pending');
+        batch.update(doc(db, 'records', r.id), { 
+          status: newStatus,
+          cancelledAt: deleteField()
+        });
       });
       
       await batch.commit();
-      onNotify('نجاح', `تم استعادة الرحلة #${trip.tripNumber} وإعادتها لحالة النشاط`);
+
+      // سـجل الـفعل
+      await addDoc(collection(db, 'system_logs'), {
+        timestamp: Date.now(),
+        type: 'system_error',
+        userId: userCode || 'ADMIN',
+        message: 'استعادة رحلة ملغاة',
+        details: `تمت استعادة الرحلة #${trip.tripNumber} وعدد ${tripRecords.length} طبلية مرتبطة بها.`
+      });
+
+      onNotify('✅ تم استعادة الرحلة', `تمت استعادة الرحلة #${trip.tripNumber} وكافة متعلقاتها بنجاح.`);
       setShowRestoreTripModal(false);
       setTripIdToRestore(null);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'trips');
+    } catch (e: any) {
+      console.error('Failed to restore trip:', e);
+      const errorMsg = e?.message || String(e);
+      onNotify('❌ خطأ', `فشل في استعادة الرحلة: ${errorMsg}`);
     }
   };
 
@@ -1128,7 +1154,17 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       return;
     }
 
-    const exportData = tripRecords.map(r => {
+    // Sort by stage then barcode
+    const sortedRecords = [...tripRecords].sort((a, b) => {
+      const typeA = palletTypes.find(t => t.id === a.palletTypeId);
+      const typeB = palletTypes.find(t => t.id === b.palletTypeId);
+      if (!typeA || !typeB) return 0;
+      const stageCompare = (typeA.stageCode || '').localeCompare(typeB.stageCode || '');
+      if (stageCompare !== 0) return stageCompare;
+      return (a.palletBarcode || '').localeCompare(b.palletBarcode || '');
+    });
+
+    const exportData = sortedRecords.map(r => {
       const pType = palletTypes.find(t => t.id === r.palletTypeId);
       return {
         'رقم الرحلة': trip?.tripNumber || '---',
@@ -1149,7 +1185,19 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   };
 
   const currentTrip = useMemo(() => trips.find(t => t.id === currentTripId), [trips, currentTripId]);
-  const currentTripRecords = useMemo(() => records.filter(r => r.tripId === currentTripId), [records, currentTripId]);
+  const currentTripRecords = useMemo(() => {
+    const filtered = records.filter(r => r.tripId === currentTripId);
+    return [...filtered].sort((a, b) => {
+      const typeA = palletTypes.find(t => t.id === a.palletTypeId);
+      const typeB = palletTypes.find(t => t.id === b.palletTypeId);
+      if (!typeA || !typeB) return 0;
+      
+      const stageCompare = (typeA.stageCode || '').localeCompare(typeB.stageCode || '');
+      if (stageCompare !== 0) return stageCompare;
+      
+      return (a.palletBarcode || '').localeCompare(b.palletBarcode || '');
+    });
+  }, [records, currentTripId, palletTypes]);
 
   const stats = useMemo(() => {
     const received = statsRecords.filter(r => r.status === 'received');
@@ -2058,15 +2106,18 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                           });
 
                           const remainingBundlesTotal = stageReceivedBundles - stageShippedBundles;
-                          if (remainingBundlesTotal > 0) {
-                            details.push({
-                              stageName: type.stageName,
-                              remainingCartons: Math.floor(remainingBundlesTotal / type.bundlesPerCarton),
-                              remainingBundles: remainingBundlesTotal % type.bundlesPerCarton,
-                              totalBundles: remainingBundlesTotal
-                            });
-                          }
+                          
+                          // ندرج كافة المراحل حتى لو كان الرصيد صفراً لضمان ظهور كامل القائمة للمستخدم
+                          details.push({
+                            stageName: type.stageName,
+                            remainingCartons: Math.floor(remainingBundlesTotal / type.bundlesPerCarton),
+                            remainingBundles: remainingBundlesTotal % type.bundlesPerCarton,
+                            totalBundles: remainingBundlesTotal
+                          });
                         });
+
+                        // ترتيب التفاصيل حسب الاسم لسهولة القراءة
+                        details.sort((a, b) => a.stageName.localeCompare(b.stageName));
 
                         setSelectedCenterForBalance({
                           name: center.displayName,
