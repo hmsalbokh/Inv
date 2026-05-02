@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
-import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition, UserCredentials } from '../types';
+import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition, UserCredentials, PalletStatus } from '../types';
 import { db } from '../firebase';
-import { doc, updateDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, deleteField, getDoc, writeBatch } from 'firebase/firestore';
 
 declare var html2pdf: any;
 
@@ -21,7 +21,7 @@ type LabelSize = '10x15' | '3x4';
 
 export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending' | 'cancelled'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [palletTypeFilter, setPalletTypeFilter] = useState<string | 'ALL'>('ALL');
@@ -35,7 +35,57 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkCancelling, setIsBulkCancelling] = useState(false);
 
+  const [isRestoring, setIsRestoring] = useState<string | null>(null);
   const isAdmin = useMemo(() => userCode === 'ADMIN' || (role as string) === 'admin', [userCode, role]);
+
+  const handleRestoreRecord = async (record: InventoryRecord) => {
+    setIsRestoring(record.id);
+    try {
+      console.log(`Restoring record: ${record.id}`);
+      
+      const docRef = doc(db, 'records', record.id);
+      const docSnap = await getDoc(docRef);
+      
+      let targetRecord = record;
+      if (docSnap.exists()) {
+        targetRecord = { ...docSnap.data(), id: docSnap.id } as InventoryRecord;
+      }
+
+      let restoredStatus: PalletStatus = 'pending';
+      if (targetRecord.centerTimestamp) restoredStatus = 'received';
+      else if (targetRecord.factoryTimestamp) restoredStatus = 'in_transit';
+
+      const batch = writeBatch(db);
+      batch.update(docRef, {
+        status: restoredStatus,
+        cancelledAt: deleteField()
+      });
+
+      await batch.commit();
+
+      await addDoc(collection(db, 'system_logs'), {
+        timestamp: Date.now(),
+        type: 'system_error',
+        userId: userCode || 'مجهول',
+        message: 'إعادة تفعيل لصيقة',
+        details: `تمت استعادة اللصيقة رقم (${record.palletBarcode}) وإعادتها لحالة: ${restoredStatus}.`
+      });
+
+      const statusAr = restoredStatus === 'received' ? 'تم الاستلام' : restoredStatus === 'in_transit' ? 'في الطريق' : 'بانتظار التحميل';
+      
+      if (onNotify) {
+        onNotify('✅ تمت الاستعادة', `تمت إعادة تفعيل اللصيقة (${record.palletBarcode}) بنجاح. الحالة الحالية: ${statusAr}.`);
+      }
+    } catch (err: any) {
+      console.error('Failed to restore record:', err);
+      const errorMsg = err?.message || String(err);
+      if (onNotify) {
+        onNotify('❌ خطأ في الاستعادة', `فشل في استعادة اللصيقة: ${errorMsg}`);
+      }
+    } finally {
+      setIsRestoring(null);
+    }
+  };
 
   const toggleSelection = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -51,13 +101,10 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const handleBulkCancel = async () => {
     if (selectedIds.size === 0) return;
     
-    const confirmMsg = `⚠️ تحذير: هل أنت متأكد من إلغاء ${selectedIds.size} لصيقة محددة؟\nسيتم استبعادها جميعاً من المخزون والإحصائيات.`;
-    
-    if (window.confirm(confirmMsg)) {
-      setIsBulkCancelling(true);
-      try {
-        const batchSize = 10; // Batch size for sequential processing or use writeBatch
-        const ids = Array.from(selectedIds);
+    setIsBulkCancelling(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const batchSize = 10;
         
         for (let i = 0; i < ids.length; i++) {
            const id = ids[i];
@@ -88,7 +135,6 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       } finally {
         setIsBulkCancelling(false);
       }
-    }
   };
 
   // جلب اسم المنشأة ديناميكياً
@@ -173,6 +219,9 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
 
   const filteredRecords = useMemo(() => {
     return records.filter(record => {
+      // الملصقات الملغاة تظهر فقط لمسئول النظام
+      if (record.status === 'cancelled' && !isAdmin) return false;
+
       let isVisible = false;
       if (role === 'monitor') isVisible = true;
       else if (role === 'factory') isVisible = record.palletBarcode.includes(userCode);
@@ -262,10 +311,21 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const handlePrintTripBatch = (tripId: string) => {
     const tripRecords = records.filter(r => r.tripId === tripId);
     if (tripRecords.length === 0) return;
+
+    // Sort by stage then barcode
+    const sortedTripRecords = [...tripRecords].sort((a, b) => {
+      const typeA = palletTypes.find(t => t.id === a.palletTypeId);
+      const typeB = palletTypes.find(t => t.id === b.palletTypeId);
+      if (!typeA || !typeB) return 0;
+      const stageCompare = (typeA.stageCode || '').localeCompare(typeB.stageCode || '');
+      if (stageCompare !== 0) return stageCompare;
+      return (a.palletBarcode || '').localeCompare(b.palletBarcode || '');
+    });
+
     const isLarge = selectedSize === '10x15';
     const w = isLarge ? 100 : 76;
     const h = isLarge ? 150 : 101;
-    const html = tripRecords.map(r => generateLabelHTML(r, selectedSize)).join('');
+    const html = sortedTripRecords.map(r => generateLabelHTML(r, selectedSize)).join('');
 
     const printWindow = window.open('', '_blank');
     if (printWindow) {
@@ -304,72 +364,64 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   };
 
   const handleForceUpdate = async (record: InventoryRecord) => {
-    if (window.confirm('هل أنت متأكد من إجبار تعديل وتسجيل حالة هذا الباركود يدوياً؟')) {
-       try {
-         const updates = { 
-            status: record.status === 'pending' ? 'in_transit' : 'received', 
-            timestamp: Date.now() 
-         };
-         
-         if (record.status === 'pending') {
-            (updates as any).factoryTimestamp = Date.now();
-         } else if (record.status === 'in_transit') {
-            (updates as any).centerTimestamp = Date.now();
-         }
+    try {
+      const updates = { 
+        status: record.status === 'pending' ? 'in_transit' : 'received', 
+        timestamp: Date.now() 
+      };
+      
+      if (record.status === 'pending') {
+        (updates as any).factoryTimestamp = Date.now();
+      } else if (record.status === 'in_transit') {
+        (updates as any).centerTimestamp = Date.now();
+      }
 
-         await updateDoc(doc(db, 'records', record.id), updates);
-         
-         await addDoc(collection(db, 'system_logs'), {
-             timestamp: Date.now(),
-             type: 'system_error',
-             userId: userCode || 'مجهول',
-             message: 'تجاوز بصلاحية الإدارة',
-             details: `تم إجبار تغيير حالة الطبلية (${record.palletBarcode}) يدوياً من السجل إلى: ${updates.status}`
-         });
+      await updateDoc(doc(db, 'records', record.id), updates);
+      
+      await addDoc(collection(db, 'system_logs'), {
+        timestamp: Date.now(),
+        type: 'system_error',
+        userId: userCode || 'مجهول',
+        message: 'تجاوز بصلاحية الإدارة',
+        details: `تم إجبار تغيير حالة الطبلية (${record.palletBarcode}) يدوياً من السجل إلى: ${updates.status}`
+      });
 
-         alert('تم تعديل الحالة بنجاح عبر التجاوز اليدوي.');
-       } catch (err) {
-         console.error('Failed to force update', err);
-         alert('حدث خطأ أثناء تعديل الحالة.');
-       }
+      if (onNotify) {
+        onNotify('✅ نجاح', 'تم تعديل الحالة بنجاح.');
+      }
+    } catch (err: any) {
+      console.error('Failed to force update', err);
+      if (onNotify) onNotify('❌ خطأ', 'حدث خطأ أثناء محاولة تعديل الحالة.');
     }
   };
 
   const handleCancelRecord = async (record: InventoryRecord) => {
-    const confirmMsg = `⚠️ تحذير: هل أنت متأكد من إلغاء هذه اللصيقة (${record.palletBarcode})؟\nلن تحتسب هذه اللصيقة في جرد المخزون أو الإحصائيات.`;
-    
-    if (window.confirm(confirmMsg)) {
-      setIsCancelling(record.id);
-      try {
-        console.log(`Cancelling record: ${record.id}`);
-        await updateDoc(doc(db, 'records', record.id), {
-          status: 'cancelled',
-          cancelledAt: Date.now()
-        });
+    setIsCancelling(record.id);
+    try {
+      console.log(`Cancelling record: ${record.id}`);
+      await updateDoc(doc(db, 'records', record.id), {
+        status: 'cancelled',
+        cancelledAt: Date.now()
+      });
 
-        await addDoc(collection(db, 'system_logs'), {
-          timestamp: Date.now(),
-          type: 'system_error',
-          userId: userCode || 'مجهول',
-          message: 'إلغاء لصيقة سجل',
-          details: `تم إلغاء اللصيقة رقم (${record.palletBarcode}) بواسطة مسؤول النظام (الحالة السابقة: ${record.status}).`
-        });
+      await addDoc(collection(db, 'system_logs'), {
+        timestamp: Date.now(),
+        type: 'system_error',
+        userId: userCode || 'مجهول',
+        message: 'إلغاء لصيقة سجل',
+        details: `تم إلغاء اللصيقة رقم (${record.palletBarcode}) بواسطة مسؤول النظام (الحالة السابقة: ${record.status}).`
+      });
 
-        if (onNotify) {
-          onNotify('تم الإلغاء', 'تم إلغاء اللصيقة بنجاح من النظام والمخزون.');
-        } else {
-          alert('تم إلغاء اللصيقة بنجاح.');
-        }
-      } catch (err) {
-        console.error('Failed to cancel record:', err);
-        if (onNotify) {
-          onNotify('خطأ', 'فشل إلغاء اللصيقة. يرجى التحقق من الصلاحيات.');
-        } else {
-          alert('حدث خطأ أثناء محاولة إلغاء اللصيقة.');
-        }
-      } finally {
-        setIsCancelling(null);
+      if (onNotify) {
+        onNotify('⚠️ تم الإلغاء', 'تم إلغاء اللصيقة بنجاح من النظام والمخزون.');
       }
+    } catch (err: any) {
+      console.error('Failed to cancel record:', err);
+      if (onNotify) {
+        onNotify('❌ خطأ', 'فشل إلغاء اللصيقة. يرجى التحقق من الاتصال.');
+      }
+    } finally {
+      setIsCancelling(null);
     }
   };
 
@@ -491,6 +543,9 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
             <button onClick={() => setStatusFilter('received')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'received' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>تم الاستلام ✅</button>
             <button onClick={() => setStatusFilter('in_transit')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'in_transit' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-600'}`}>في الطريق 🚚</button>
             <button onClick={() => setStatusFilter('pending')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'pending' ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-600'}`}>معلق 🏭</button>
+            {isAdmin && (
+              <button onClick={() => setStatusFilter('cancelled')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'cancelled' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>الملغاة ⚠️</button>
+            )}
             
             <div className="w-px h-6 bg-slate-200 mx-1 flex-shrink-0"></div>
             
@@ -692,6 +747,32 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                          className="w-full bg-amber-50 text-amber-700 border border-amber-100 py-3 rounded-2xl text-[10px] font-black flex items-center justify-center gap-2 active:scale-95 transition-all mt-2"
                        >
                          <span>⚡ إجبار التمرير وتخطي المسح (لحلول خلل النظام المباشرة)</span>
+                       </button>
+                    )}
+
+                    {isAdmin && record.status === 'cancelled' && (
+                       <button 
+                         disabled={isRestoring === record.id}
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           handleRestoreRecord(record);
+                         }}
+                         className={`w-full py-3 rounded-2xl text-[10px] font-black flex items-center justify-center gap-2 active:scale-95 transition-all mt-2 ${
+                           isRestoring === record.id 
+                           ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                           : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                         }`}
+                       >
+                         {isRestoring === record.id ? (
+                           <>
+                             <div className="w-3 h-3 border-2 border-indigo-700 border-t-transparent rounded-full animate-spin"></div>
+                             <span>جاري الاستعادة...</span>
+                           </>
+                         ) : (
+                           <>
+                             <span>🔄 إعادة تفعيل هذه اللصيقة (إلغاء الإلغاء)</span>
+                           </>
+                         )}
                        </button>
                     )}
 
