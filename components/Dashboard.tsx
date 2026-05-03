@@ -1964,25 +1964,28 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               const centerRecords = statsRecords.filter(r => r.destination === center.code);
               const receivedRecords = centerRecords.filter(r => r.status === 'received');
               
+              const centerExecutedTripsForCalc = consolidatedTrips.filter(t => 
+                t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                (t.status === 'executed' || t.status === 'dispatched')
+              );
+
               let centerCartons = 0;
               let centerBundles = 0;
               let centerEmptyCartons = 0;
+              let exportedBookCartons = 0;
+              let exportedExtraBundles = 0;
+              let exportedBookBundles = 0;
+              let exportedEmptyCartons = 0;
               const emptyBreakdownMap: Record<string, number> = {};
 
               receivedRecords.forEach(r => {
                 const type = palletTypes.find(t => t.id === r.palletTypeId);
                 if (type) {
-                  let c = r.isExtraOnly ? 0 : type.cartonsPerPallet;
-                  let b = c * type.bundlesPerCarton;
+                  let c = (r.isExtraOnly ? 0 : type.cartonsPerPallet);
+                  if (r.extraCartons) c += r.extraCartons;
+                  if (r.missingCartons) c -= r.missingCartons;
 
-                  if (r.extraCartons) {
-                    c += r.extraCartons;
-                    b += r.extraCartons * type.bundlesPerCarton;
-                  }
-                  if (r.missingCartons) {
-                    c -= r.missingCartons;
-                    b -= r.missingCartons * type.bundlesPerCarton;
-                  }
+                  let b = c * type.bundlesPerCarton;
 
                   if (r.hasDiscrepancy) {
                     const sign = r.discrepancyType === 'excess' ? 1 : -1;
@@ -2002,32 +2005,59 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 }
               });
 
-              let exportedBookCartons = 0;
-              let exportedBookBundles = 0;
-              let exportedEmptyCartons = 0;
-              const centerExecutedTripsForCalc = consolidatedTrips.filter(t => 
-                t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
-                (t.status === 'executed' || t.status === 'dispatched')
-              );
               centerExecutedTripsForCalc.forEach(et => {
                 const qtList = et.executedQuantities || et.quantities;
                 qtList.forEach(q => {
                   const type = palletTypes.find(t => t.id === q.palletTypeId);
                   if (type) {
+                    const b = q.bundleCount || 0;
                     if (type.stageCode.toUpperCase().startsWith('F')) {
                       exportedEmptyCartons += q.cartonCount;
                       emptyBreakdownMap[type.stageName] = (emptyBreakdownMap[type.stageName] || 0) - q.cartonCount;
                     } else {
                       exportedBookCartons += q.cartonCount;
-                      exportedBookBundles += (q.bundleCount || 0);
+                      exportedBookBundles += b;
+                      exportedExtraBundles += (b % type.bundlesPerCarton);
                     }
                   }
                 });
               });
               
-              const remainingBookBalance = centerCartons - exportedBookCartons;
-              const remainingBookBundles = centerBundles - exportedBookBundles;
-              const remainingEmptyBalance = centerEmptyCartons - exportedEmptyCartons;
+              // حساب دقيق للرصيد المتبقي الحر الإجمالي من خلال جمع الأرصدة المتبقية لكل مرحلة
+              let totalRemainingCartonsSum = 0;
+              let totalRemainingBundlesSum = 0;
+              let totalRemainingBundlesRaw = 0;
+
+              palletTypes.filter(t => !t.stageCode.toUpperCase().startsWith('F')).forEach(type => {
+                let stageReceivedB = 0;
+                receivedRecords.filter(r => r.palletTypeId === type.id).forEach(r => {
+                  let b = (r.isExtraOnly ? 0 : type.cartonsPerPallet) * type.bundlesPerCarton;
+                  if (r.extraCartons) b += r.extraCartons * type.bundlesPerCarton;
+                  if (r.missingCartons) b -= r.missingCartons * type.bundlesPerCarton;
+                  if (r.hasDiscrepancy) {
+                    const sign = r.discrepancyType === 'excess' ? 1 : -1;
+                    b += sign * ((r.discrepancyCartonsQty || 0) * type.bundlesPerCarton + (r.discrepancyBundlesQty || 0));
+                  }
+                  stageReceivedB += b;
+                });
+
+                let stageShippedB = 0;
+                centerExecutedTripsForCalc.forEach(et => {
+                  const q = (et.executedQuantities || et.quantities).find(qty => qty.palletTypeId === type.id);
+                  if (q) {
+                    stageShippedB += q.bundleCount || 0;
+                  }
+                });
+
+                const stageRemainingB = Math.max(0, stageReceivedB - stageShippedB);
+                totalRemainingCartonsSum += Math.floor(stageRemainingB / type.bundlesPerCarton);
+                totalRemainingBundlesSum += (stageRemainingB % type.bundlesPerCarton);
+                totalRemainingBundlesRaw += stageRemainingB;
+              });
+              
+              const remainingBookBalance = totalRemainingCartonsSum;
+              const remainingExtraBundles = totalRemainingBundlesSum;
+              const remainingEmptyBalance = Math.max(0, centerEmptyCartons - exportedEmptyCartons);
 
               const centerPlannedTrips = consolidatedTrips
                 .filter(t => 
@@ -2061,7 +2091,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     </div>
                     <div className="bg-indigo-50 p-2 rounded-xl text-center border border-indigo-100">
                       <span className="text-lg block">🏭</span>
-                      <span className="text-xs font-black text-indigo-700 block">{centerRecords.filter(r => r.status === 'pending').length}</span>
+                      <span className="text-xs font-black text-indigo-700 block">{
+centerRecords.filter(r => r.status === 'pending').length}</span>
                       <span className="text-[7px] font-bold text-indigo-500 uppercase">بالمطبعة</span>
                     </div>
                     <div className="bg-amber-50 p-2 rounded-xl text-center border border-amber-100">
@@ -2076,7 +2107,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                       <span className="text-[8px] font-black text-indigo-400 uppercase block">تم التصدير (خروج)</span>
                       <div className="flex flex-col items-center">
                         <span className="text-sm font-black text-indigo-900">{exportedBookCartons.toLocaleString()} كرتون</span>
-                        <span className="text-[10px] font-black text-indigo-700/70">{exportedBookBundles.toLocaleString()} حزمة</span>
+                        <span className="text-[10px] font-black text-indigo-700/70">{exportedExtraBundles.toLocaleString()} حزمة زائدة</span>
                       </div>
                     </div>
                     <div 
@@ -2086,8 +2117,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                         palletTypes.filter(t => !t.stageCode.toUpperCase().startsWith('F')).forEach(type => {
                           let stageReceivedBundles = 0;
                           receivedRecords.filter(r => r.palletTypeId === type.id).forEach(r => {
-                            let b = type.cartonsPerPallet * type.bundlesPerCarton;
-                            if (r.isExtraOnly) b = 0;
+                            let b = (r.isExtraOnly ? 0 : type.cartonsPerPallet) * type.bundlesPerCarton;
                             if (r.extraCartons) b += r.extraCartons * type.bundlesPerCarton;
                             if (r.missingCartons) b -= r.missingCartons * type.bundlesPerCarton;
                             if (r.hasDiscrepancy) {
@@ -2101,13 +2131,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                           centerExecutedTripsForCalc.forEach(et => {
                             const q = (et.executedQuantities || et.quantities).find(qty => qty.palletTypeId === type.id);
                             if (q) {
-                              stageShippedBundles += (q.cartonCount * type.bundlesPerCarton) + (q.bundleCount || 0);
+                              stageShippedBundles += q.bundleCount || 0;
                             }
                           });
 
-                          const remainingBundlesTotal = stageReceivedBundles - stageShippedBundles;
+                          const remainingBundlesTotal = Math.max(0, stageReceivedBundles - stageShippedBundles);
                           
-                          // ندرج كافة المراحل حتى لو كان الرصيد صفراً لضمان ظهور كامل القائمة للمستخدم
+                          // ندرج كافة المراحل لسهولة التتبع
                           details.push({
                             stageName: type.stageName,
                             remainingCartons: Math.floor(remainingBundlesTotal / type.bundlesPerCarton),
@@ -2126,12 +2156,12 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                         });
                         setShowBalanceDetailModal(true);
                       }}
-                      className={`${remainingBookBalance <= 0 ? 'bg-slate-50 border-slate-200' : 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-100 cursor-pointer active:scale-95'} p-2 rounded-2xl text-center flex flex-col justify-center transition-all`}
+                      className={`${totalRemainingBundlesRaw <= 0 ? 'bg-slate-50 border-slate-200' : 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-100 cursor-pointer active:scale-95'} p-2 rounded-2xl text-center flex flex-col justify-center transition-all`}
                     >
-                      <span className={`text-[8px] font-black uppercase block ${remainingBookBalance <= 0 ? 'text-slate-400' : 'text-emerald-100'}`}>الرصيد المتبقي الحر</span>
+                      <span className={`text-[8px] font-black uppercase block ${totalRemainingBundlesRaw <= 0 ? 'text-slate-400' : 'text-emerald-100'}`}>الرصيد المتبقي الحر</span>
                       <div className="flex flex-col items-center">
-                        <span className={`text-sm font-black ${remainingBookBalance <= 0 ? 'text-slate-400' : 'text-white'}`}>{remainingBookBalance.toLocaleString()} كرتون</span>
-                        <span className={`text-[10px] font-black ${remainingBookBalance <= 0 ? 'text-slate-400/60' : 'text-emerald-100/80'}`}>{remainingBookBundles.toLocaleString()} حزمة</span>
+                        <span className={`text-sm font-black ${totalRemainingBundlesRaw <= 0 ? 'text-slate-400' : 'text-white'}`}>{remainingBookBalance.toLocaleString()} كرتون</span>
+                        <span className={`text-[10px] font-black ${totalRemainingBundlesRaw <= 0 ? 'text-slate-400/60' : 'text-emerald-100/80'}`}>{remainingExtraBundles.toLocaleString()} حزمة زائدة</span>
                       </div>
                     </div>
                   </div>
@@ -2666,21 +2696,26 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
-                          {selectedCenterForBalance.details.map((item, idx) => (
-                            <tr key={idx}>
-                              <td className="px-3 py-2 font-black text-slate-700">{item.stageName}</td>
-                              <td className="px-3 py-2 text-center">
-                                <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-lg font-black">
-                                  {item.remainingCartons.toLocaleString()}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-center">
-                                <span className={`px-2 py-0.5 rounded-lg font-black ${item.remainingBundles > 0 ? 'bg-amber-50 text-amber-600' : 'text-slate-300'}`}>
-                                  {item.remainingBundles.toLocaleString()}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {selectedCenterForBalance.details.map((item, idx) => {
+                            const isNegative = item.totalBundles < 0;
+                            return (
+                              <tr key={idx} className={isNegative ? "bg-rose-50/30" : ""}>
+                                <td className={`px-3 py-2 font-black ${isNegative ? 'text-rose-700' : 'text-slate-700'}`}>
+                                  {item.stageName} {isNegative && <span className="text-[8px]">(عجز)</span>}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  <span className={`${isNegative ? 'bg-rose-100 text-rose-700' : 'bg-emerald-50 text-emerald-700'} px-2 py-0.5 rounded-lg font-black`}>
+                                    {item.remainingCartons.toLocaleString()}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  <span className={`px-2 py-0.5 rounded-lg font-black ${isNegative ? 'bg-rose-100 text-rose-600' : item.remainingBundles > 0 ? 'bg-amber-50 text-amber-600' : 'text-slate-300'}`}>
+                                    {item.remainingBundles.toLocaleString()}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
