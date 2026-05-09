@@ -197,12 +197,28 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [tripIdToRevert, setTripIdToRevert] = useState<string | null>(null);
   const [showDeleteDistModal, setShowDeleteDistModal] = useState(false);
   const [tripIdToDeleteDist, setTripIdToDeleteDist] = useState<string | null>(null);
+  const [showDispatchConfirmModal, setShowDispatchConfirmModal] = useState(false);
+  const [tripToDispatch, setTripToDispatch] = useState<string | null>(null);
   const [showEmptyCartonsModal, setShowEmptyCartonsModal] = useState(false);
   const [showBalanceDetailModal, setShowBalanceDetailModal] = useState(false);
   const [selectedCenterForBalance, setSelectedCenterForBalance] = useState<{
     name: string;
     code: string;
     details: { stageName: string; remainingCartons: number; remainingBundles: number; totalBundles: number }[];
+  } | null>(null);
+
+  const [showExportedDetailModal, setShowExportedDetailModal] = useState(false);
+  const [selectedCenterForExported, setSelectedCenterForExported] = useState<{
+    name: string;
+    code: string;
+    details: { stageName: string; exportedCartons: number; exportedBundles: number }[];
+  } | null>(null);
+
+  const [showReceivedDetailModal, setShowReceivedDetailModal] = useState(false);
+  const [selectedCenterForReceived, setSelectedCenterForReceived] = useState<{
+    name: string;
+    code: string;
+    details: { stageName: string; receivedCartons: number; receivedBundles: number; receivedPallets: number }[];
   } | null>(null);
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState('');
@@ -211,14 +227,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     items: { stageName: string; cartons: number }[];
   } | null>(null);
 
-  // Consolidated trips to handle duplicates in the database (favoring most advanced status)
+  // Consolidated trips to handle duplicates in the database (favoring most advanced status and newest date)
   const consolidatedTrips = useMemo(() => {
+    // Stage 1: Basic normalization and global grouping by trip number
     const grouped = new Map<string, DistributionTrip>();
+    
     distributionTrips.forEach(t => {
-      // Clean the trip number to handle hidden characters or variations in spacing
-      const cleanNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '').toLowerCase();
-      const cleanOrigin = (t.originCenter || '').trim().toLowerCase();
-      const key = `${cleanNum}_${cleanOrigin}`;
+      const cleanNum = (t.tripNumber || '').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '').toLowerCase();
+      
+      const key = cleanNum; // GLOBAL deduplication (ignoring originCenter if number matches)
       
       const existing = grouped.get(key);
       if (!existing) {
@@ -231,12 +248,58 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         if (currentPrio > existingPrio) {
           grouped.set(key, t);
         } else if (currentPrio === existingPrio) {
-          // If statuses are equal, prefer the more recently updated (if we had a timestamp)
-          // or just keep the first one found.
+          // If both have the same status, take the one with the newest date
+          const dateCurrent = new Date(t.date || 0).getTime();
+          const dateExisting = new Date(existing.date || 0).getTime();
+          if (dateCurrent > dateExisting) {
+            grouped.set(key, t);
+          }
         }
       }
     });
-    return Array.from(grouped.values());
+
+    // Stage 2: Suffix handling (e.g., ZJED-T01 vs ZJED-T01-A)
+    // If one trip number is a prefix of another and they share similar properties, merge them.
+    const finalGrouped = new Map<string, DistributionTrip>();
+    const sorted = Array.from(grouped.values()).sort((a, b) => {
+      const na = (a.tripNumber || '').replace(/[^a-zA-Z0-9]/g, '').length;
+      const nb = (b.tripNumber || '').replace(/[^a-zA-Z0-9]/g, '').length;
+      return na - nb; // Shortest first (bases first)
+    });
+
+    sorted.forEach(t => {
+      const clean = (t.tripNumber || '').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '').toLowerCase();
+      
+      // Look if there's an existing base number that this number starts with (e.g., "zdmmt01" is base for "zdmmt01a")
+      let baseKey = clean;
+      for (const existingKey of finalGrouped.keys()) {
+          if (clean.startsWith(existingKey) && clean.length <= existingKey.length + 2) {
+              baseKey = existingKey;
+              break;
+          }
+      }
+
+      const existing = finalGrouped.get(baseKey);
+      if (!existing) {
+        finalGrouped.set(baseKey, t);
+      } else {
+        const statusPriority: Record<string, number> = { 'executed': 3, 'dispatched': 2, 'planned': 1 };
+        const currentPrio = statusPriority[t.status] || 0;
+        const existingPrio = statusPriority[existing.status] || 0;
+        
+        if (currentPrio > existingPrio) {
+          finalGrouped.set(baseKey, t);
+        } else if (currentPrio === existingPrio) {
+          const dateCurrent = new Date(t.date || 0).getTime();
+          const dateExisting = new Date(existing.date || 0).getTime();
+          if (dateCurrent > dateExisting) {
+            finalGrouped.set(baseKey, t);
+          }
+        }
+      }
+    });
+
+    return Array.from(finalGrouped.values());
   }, [distributionTrips]);
 
   const centerOptions = useMemo(() => {
@@ -331,13 +394,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           const rawTripNumber = row['رقم الرحلة'] || row['tripNumber'];
           if (!rawTripNumber) return;
           
-          const tripNumber = String(rawTripNumber).trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
-          if (processedNumbers.has(tripNumber)) return;
-          processedNumbers.add(tripNumber);
+          const tripNumber = String(rawTripNumber).replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '');
+          if (processedNumbers.has(tripNumber.toLowerCase())) return;
+          processedNumbers.add(tripNumber.toLowerCase());
           
           // البحث عن رحلة موجودة بنفس الرقم لمنع التكرار (بغض النظر عن الحالة)
           const existingTrip = distributionTrips.find(t => {
-            const dbNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+            const dbNum = (t.tripNumber || '').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '');
             return dbNum.toLowerCase() === tripNumber.toLowerCase();
           });
 
@@ -474,13 +537,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           }
            
           // Clean trip number - KEEP FULL STRING for alphanumeric IDs like ZDMM-T01
-          const cleanRowNumber = tripNumberStr.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+          const cleanRowNumber = tripNumberStr.replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '');
           
           console.log(`Actual Upload Debug: Attempting match for [${cleanRowNumber}]`);
 
           // Find if this trip already exists - robust string matching
           const existingTrip = consolidatedTrips.find(t => {
-            const dbTripNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+            const dbTripNum = (t.tripNumber || '').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '');
             
             // Case-insensitive exact string match
             return dbTripNum.toLowerCase() === cleanRowNumber.toLowerCase();
@@ -784,11 +847,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         });
         onNotify('نجاح', 'تم تحديث الرحلة بنجاح');
       } else {
-        const cleanNumber = distTripData.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+        const cleanNumber = distTripData.tripNumber.replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '');
         
-        // التحقق من تكرار رقم الرحلة
-        const isDuplicate = distributionTrips.some(t => {
-           const dbNum = t.tripNumber.trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+        // التحقق من تكرار رقم الرحلة (باستخدام القائمة المدمجة بدلاً من كل الرحلات)
+        const isDuplicate = consolidatedTrips.some(t => {
+           const dbNum = (t.tripNumber || '').replace(/[^a-zA-Z0-9\u0600-\u06FF]/g, '');
            return dbNum.toLowerCase() === cleanNumber.toLowerCase();
         });
         
@@ -949,7 +1012,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           // حساب الكميات المصدرة لهذه المرحلة
           let typeExportedCartons = 0;
           let typeExportedBundles = 0;
-          const centerExecutedTrips = distributionTrips.filter(t => 
+          const centerExecutedTrips = consolidatedTrips.filter(t => 
             t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
             (t.status === 'executed' || t.status === 'dispatched')
           );
@@ -999,10 +1062,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             totalBundles += b;
           });
 
-          const remaining = totalCartons - plannedQty;
+          // الحساب الصحيح للرصيد المتبقي: المستلم - (المنفذ + المشحون)
+          const remaining = Math.max(0, totalCartons - typeExportedCartons);
           const remainingPallets = type.cartonsPerPallet > 0 ? (remaining / type.cartonsPerPallet).toFixed(2) : '0';
 
-          if (palletCount > 0 || plannedQty > 0) {
+          if (palletCount > 0 || plannedQty > 0 || typeExportedCartons > 0) {
             exportData.push({
               'المركز': center.locationName || center.displayName,
               'المرحلة': type.stageName,
@@ -1012,10 +1076,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               'إجمالي الكراتين المستلمة': totalCartons,
               'إجمالي الحزم المستلمة': totalBundles,
               'تم تصديره (كرتون)': typeExportedCartons,
-              'تم تصديره (حزمة)': typeExportedBundles,
+              'تم تصديره (حزمة)': typeExportedBundles, // الكمية التي تم شحنها أو تنفيذها فعلياً بالحزم
               'مخطط صرفه (كرتون)': plannedQty,
-              'المخزون المتبقي (كرتون)': remaining,
-              'المخزون المتبقي (حزمة)': remaining * type.bundlesPerCarton,
+              'الرصيد الحر المتبقي (كرتون)': remaining,
+              'الرصيد الحر المتبقي (حزمة)': remaining * type.bundlesPerCarton,
               'الطبليات المتبقية': remainingPallets
             });
           }
@@ -1032,6 +1096,125 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, isDateFiltered ? "Deficit Trips" : "Inventory Report");
     XLSX.writeFile(wb, `${isDateFiltered ? 'Deficit_Trips' : 'Inventory_Report'}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const handleExportAllTripsRaw = () => {
+    try {
+      const data = distributionTrips.map(t => {
+        const row: any = {
+          'رقم الرحلة': t.tripNumber,
+          'مركز المنشأ': t.originCenter,
+          'الوجهة / المقصد': t.destinationCity,
+          'التاريخ': t.date,
+          'الحالة': t.status === 'executed' ? 'تم التنفيذ' : t.status === 'dispatched' ? 'تم الشحن' : 'مخطط',
+          'المعرف الفريد (ID)': t.id
+        };
+
+        // إضافة الكميات لكل مرحلة كأعمدة
+        t.quantities.forEach(q => {
+          const type = palletTypes.find(pt => pt.id === q.palletTypeId);
+          if (type) {
+            row[type.stageName] = q.cartonCount;
+          }
+        });
+
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "جميع الرحلات الخام");
+      XLSX.writeFile(wb, `All_Trips_Raw_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('فشل تصدير التقرير الكامل');
+    }
+  };
+
+  const handleExportAllPalletsRaw = () => {
+    try {
+      const data = records.map(r => {
+        const pType = palletTypes.find(t => t.id === r.palletTypeId);
+        const trip = trips.find(t => t.id === r.tripId);
+        return {
+          'باركود الطبلية': r.palletBarcode,
+          'رقم الرحلة': trip?.tripNumber || '---',
+          'المرحلة': pType?.stageName || '---',
+          'الوجهة': getDisplayName(r.destination),
+          'الحالة': r.status === 'received' ? 'تم الاستلام' : r.status === 'in_transit' ? 'في الطريق' : r.status === 'cancelled' ? 'ملغاة' : 'في المطبعة',
+          'المنشأ': getDisplayName(trip?.pressCode || '---'),
+          'كراتين إضافية': r.extraCartons || 0,
+          'كراتين ناقصة': r.missingCartons || 0,
+          'تاريخ الإنشاء': r.timestamp ? new Date(r.timestamp).toLocaleString('ar-SA') : '---'
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "جميع الطبليات");
+      XLSX.writeFile(wb, `All_Pallets_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('فشل تصدير بيانات الطبليات');
+    }
+  };
+
+  const handleDownloadComparisonReport = () => {
+    try {
+      const USER_PLAN_DMM: Record<string, number> = {
+        'الصف الأول الابتدائي': 3629,
+        'الصف الثاني الابتدائي': 5120,
+        'الصف الثالث الابتدائي': 5708,
+        'الصف الرابع الابتدائي': 8323,
+        'الصف الخامس الابتدائي': 8747,
+        'الصف السادس الابتدائي': 8015,
+        'الصف الأول المتوسط': 2716
+      };
+
+      const dmmTrips = consolidatedTrips.filter(t => t.originCenter === 'DMM' && (t.status === 'executed' || t.status === 'dispatched'));
+      const systemStats = new Map<string, number>();
+
+      dmmTrips.forEach(t => {
+        const qtList = t.executedQuantities || t.quantities;
+        qtList.forEach(q => {
+          const type = palletTypes.find(pt => pt.id === q.palletTypeId);
+          if (type) {
+            systemStats.set(type.stageName, (systemStats.get(type.stageName) || 0) + q.cartonCount);
+          }
+        });
+      });
+
+      const reportData = Object.entries(USER_PLAN_DMM).map(([stage, planned]) => {
+        const executed = systemStats.get(stage) || 0;
+        return {
+          'المرحلة': stage,
+          'المخطط (حسب جدولك)': planned,
+          'المنفذ (النظام حالياً)': executed,
+          'الفارق (الزيادة)': executed - planned
+        };
+      });
+
+      const totals = reportData.reduce((acc, row) => ({
+        planned: acc.planned + row['المخطط (حسب جدولك)'],
+        executed: acc.executed + row['المنفذ (النظام حالياً)'],
+        diff: acc.diff + row['الفارق (الزيادة)']
+      }), { planned: 0, executed: 0, diff: 0 });
+
+      reportData.push({
+        'المرحلة': 'الإجمالي',
+        'المخطط (حسب جدولك)': totals.planned,
+        'المنفذ (النظام حالياً)': totals.executed,
+        'الفارق (الزيادة)': totals.diff
+      });
+
+      const ws = XLSX.utils.json_to_sheet(reportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "مقارنة التخطيط والمنفذ");
+      XLSX.writeFile(wb, `DMM_Comparison_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('فشل تصدير التقرير');
+    }
   };
 
   const handleCancelTrip = (tripId: string) => {
@@ -1267,8 +1450,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const totalIntDamagedCartons = received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0);
     const totalDamagedCartons = totalExtDamagedCartons + totalIntDamagedCartons;
 
-    // حساب المخزون المخطط صرفه (Planned Outbound)
-    const plannedOutbound = distributionTrips
+    // حساب المخزون المخطط صرفه (Planned Outbound) باستخدام الرحلات المدمجة بدون تكرار
+    const plannedOutbound = consolidatedTrips
       .filter(t => t.status === 'planned')
       .reduce((acc, t) => {
         t.quantities.forEach(q => {
@@ -1296,7 +1479,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       palletsWithDamage: received.filter(r => r.condition && r.condition !== 'intact').length,
       plannedOutbound
     };
-  }, [statsRecords, palletTypes, distributionTrips]);
+  }, [statsRecords, palletTypes, consolidatedTrips]);
 
   const getDisplayName = (code: string) => {
     const u = users.find(u => u.code === code);
@@ -1458,6 +1641,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 </button>
                 <button onClick={handleShiftPlannedTripDates} className="px-4 py-2.5 rounded-2xl bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-amber-500/30 transition-all active:scale-95" title="تحديث التواريخ">
                   تحديث تواريخ الخطة (+1 يوم)
+                </button>
+                <button onClick={handleDownloadComparisonReport} className="px-4 py-2.5 rounded-2xl bg-indigo-500/40 backdrop-blur-md border border-indigo-500/50 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/60 transition-all active:scale-95">
+                  📑 تقرير مقارنة الدمام (Excel)
+                </button>
+                <button onClick={handleExportAllTripsRaw} className="px-4 py-2.5 rounded-2xl bg-emerald-500/40 backdrop-blur-md border border-emerald-500/50 text-white text-[10px] font-black flex items-center gap-2 hover:bg-emerald-500/60 transition-all active:scale-95">
+                  📥 تصدير كافة الرحلات الخام (Excel)
+                </button>
+                <button onClick={handleExportAllPalletsRaw} className="px-4 py-2.5 rounded-2xl bg-amber-500/40 backdrop-blur-md border border-amber-500/50 text-white text-[10px] font-black flex items-center gap-2 hover:bg-amber-500/60 transition-all active:scale-95">
+                  📦 تصدير أرقام الطبليات (Excel)
                 </button>
               </div>
             </div>
@@ -2103,7 +2295,43 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-indigo-50 border border-indigo-100 p-2 rounded-2xl text-center flex flex-col justify-center">
+                    <div 
+                      onClick={() => {
+                        const details: { stageName: string; exportedCartons: number; exportedBundles: number }[] = [];
+                        
+                        palletTypes.filter(t => !t.stageCode.toUpperCase().startsWith('F')).forEach(type => {
+                          let stageShippedCartons = 0;
+                          let stageShippedBundles = 0;
+                          
+                          centerExecutedTripsForCalc.forEach(et => {
+                            const q = (et.executedQuantities || et.quantities).find(qty => qty.palletTypeId === type.id);
+                            if (q) {
+                              stageShippedCartons += q.cartonCount;
+                              stageShippedBundles += (q.bundleCount || 0) % type.bundlesPerCarton;
+                              // ملاحظة: الحزم الزائدة هي ما زاد عن الكرتونة الكاملة
+                            }
+                          });
+
+                          if (stageShippedCartons > 0 || stageShippedBundles > 0) {
+                            details.push({
+                              stageName: type.stageName,
+                              exportedCartons: stageShippedCartons,
+                              exportedBundles: stageShippedBundles
+                            });
+                          }
+                        });
+
+                        details.sort((a, b) => a.stageName.localeCompare(b.stageName));
+
+                        setSelectedCenterForExported({
+                          name: center.displayName,
+                          code: center.code,
+                          details
+                        });
+                        setShowExportedDetailModal(true);
+                      }}
+                      className="bg-indigo-50 border border-indigo-100 p-2 rounded-2xl text-center flex flex-col justify-center cursor-pointer hover:bg-indigo-100 transition-all active:scale-95 shadow-sm"
+                    >
                       <span className="text-[8px] font-black text-indigo-400 uppercase block">تم التصدير (خروج)</span>
                       <div className="flex flex-col items-center">
                         <span className="text-sm font-black text-indigo-900">{exportedBookCartons.toLocaleString()} كرتون</span>
@@ -2167,9 +2395,54 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center">
-                      <span className="text-[8px] font-black text-slate-400 uppercase block">إجمالي المستلم</span>
-                      <span className="text-xs font-bold text-slate-600">{centerCartons.toLocaleString()} ك</span>
+                    <div 
+                      onClick={() => {
+                        const details: { stageName: string; receivedCartons: number; receivedBundles: number; receivedPallets: number }[] = [];
+                        
+                        palletTypes.filter(t => !t.stageCode.toUpperCase().startsWith('F')).forEach(type => {
+                          let stageReceivedB = 0;
+                          const stageRecords = receivedRecords.filter(r => r.palletTypeId === type.id);
+                          
+                          stageRecords.forEach(r => {
+                            let b = (r.isExtraOnly ? 0 : type.cartonsPerPallet) * type.bundlesPerCarton;
+                            if (r.extraCartons) b += r.extraCartons * type.bundlesPerCarton;
+                            if (r.missingCartons) b -= r.missingCartons * type.bundlesPerCarton;
+                            if (r.hasDiscrepancy) {
+                              const sign = r.discrepancyType === 'excess' ? 1 : -1;
+                              b += sign * ((r.discrepancyCartonsQty || 0) * type.bundlesPerCarton + (r.discrepancyBundlesQty || 0));
+                            }
+                            stageReceivedB += b;
+                          });
+
+                          if (stageReceivedB > 0 || stageRecords.length > 0) {
+                            details.push({
+                              stageName: type.stageName,
+                              receivedCartons: Math.floor(stageReceivedB / type.bundlesPerCarton),
+                              receivedBundles: stageReceivedB % type.bundlesPerCarton,
+                              receivedPallets: stageRecords.length
+                            });
+                          }
+                        });
+
+                        details.sort((a, b) => a.stageName.localeCompare(b.stageName));
+
+                        setSelectedCenterForReceived({
+                          name: center.displayName,
+                          code: center.code,
+                          details
+                        });
+                        setShowReceivedDetailModal(true);
+                      }}
+                      className="bg-indigo-50 border border-indigo-100 p-2 rounded-2xl text-center flex flex-col justify-center cursor-pointer hover:bg-indigo-100 transition-all active:scale-95 shadow-sm"
+                    >
+                      <span className="text-[8px] font-black text-indigo-500 uppercase block">إجمالي المستلم</span>
+                      <div className="flex flex-col items-center">
+                        <span className="text-xs font-black text-indigo-700">{centerCartons.toLocaleString()} كرتون</span>
+                        <span className="text-[10px] font-black text-indigo-500/80">{receivedRecords.filter(r => {
+                          const t = palletTypes.find(pt => pt.id === r.palletTypeId);
+                          return t && !t.stageCode.toUpperCase().startsWith('F');
+                        }).length} طبلية</span>
+                      </div>
                     </div>
                     <div className="bg-slate-50 p-2 rounded-xl text-center flex flex-col justify-center">
                       <span className="text-[8px] font-black text-slate-400 uppercase block">إجمالي الحزم</span>
@@ -2242,19 +2515,27 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
 
                           return centerPlannedTrips.map(trip => {
                             let hasShortage = false;
+                            let hasNonEmptyCartonShortage = false;
                             const tripDeficits: { stageName: string, deficit: number }[] = [];
 
                             trip.quantities.forEach(q => {
                               const available = currentStock[q.palletTypeId] || 0;
                               if (available < q.cartonCount) {
                                 hasShortage = true;
+                                const stageName = palletTypes.find(t => t.id === q.palletTypeId)?.stageName || 'غير معروف';
+                                if (!stageName.includes('كراتين فارغة')) {
+                                  hasNonEmptyCartonShortage = true;
+                                }
                                 tripDeficits.push({
-                                  stageName: palletTypes.find(t => t.id === q.palletTypeId)?.stageName || 'غير معروف',
+                                  stageName,
                                   deficit: q.cartonCount - available
                                 });
                               }
                               currentStock[q.palletTypeId] = available - q.cartonCount;
                             });
+
+                            const isFullyDisabled = hasNonEmptyCartonShortage;
+                            const needsConfirmation = hasShortage && !hasNonEmptyCartonShortage;
 
                             const todayStr = new Date().toISOString().split('T')[0];
                             const isOverdue = trip.date < todayStr;
@@ -2285,9 +2566,16 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                                     )}
                                     {(isAdmin || (role === 'center' && userCenter === center.code)) && (
                                       <button 
-                                        onClick={() => handleDispatchTrip(trip.id)}
-                                        className={`${hasShortage ? 'bg-slate-300 cursor-not-allowed text-slate-500' : isOverdue ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white px-3 py-1.5 rounded-xl text-[8px] font-black transition-all shadow-sm`}
-                                        disabled={hasShortage}
+                                        onClick={() => {
+                                          if (needsConfirmation) {
+                                            setTripToDispatch(trip.id);
+                                            setShowDispatchConfirmModal(true);
+                                          } else {
+                                            handleDispatchTrip(trip.id);
+                                          }
+                                        }}
+                                        className={`${isFullyDisabled ? 'bg-slate-300 cursor-not-allowed text-slate-500' : isOverdue ? 'bg-rose-600 hover:bg-rose-700' : (needsConfirmation ? 'bg-amber-500 hover:bg-amber-600' : 'bg-indigo-600 hover:bg-indigo-700')} text-white px-3 py-1.5 rounded-xl text-[8px] font-black transition-all shadow-sm`}
+                                        disabled={isFullyDisabled}
                                       >
                                         إطلاق
                                       </button>
@@ -2668,6 +2956,142 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
         confirmText="حذف نهائي"
         cancelText="إلغاء"
       />
+
+      <ConfirmModal
+        isOpen={showDispatchConfirmModal}
+        title="تأكيد العجز وإطلاق الرحلة"
+        message="يوجد عجز في الكراتين الفارغة فقط. هل تريد بالتأكيد إطلاق الرحلة؟"
+        type="info"
+        onConfirm={() => {
+          if (tripToDispatch) {
+            handleDispatchTrip(tripToDispatch);
+          }
+          setShowDispatchConfirmModal(false);
+          setTripToDispatch(null);
+        }}
+        onCancel={() => {
+          setShowDispatchConfirmModal(false);
+          setTripToDispatch(null);
+        }}
+        confirmText="نعم، إطلاق الرحلة"
+        cancelText="تراجع"
+      />
+
+      {showExportedDetailModal && selectedCenterForExported && (
+        <div className="fixed inset-0 z-[6000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl border-4 border-indigo-600 overflow-hidden">
+            <div className="bg-indigo-600 p-6 text-center">
+               <h3 className="text-xl font-black text-white">تفاصيل الإنتاج المصدر (خروج)</h3>
+               <p className="text-indigo-100 text-xs font-bold mt-1">{selectedCenterForExported.name}</p>
+            </div>
+            <div className="p-4 bg-indigo-50 border-b border-indigo-100">
+               <p className="text-[10px] font-black text-indigo-800 text-center leading-relaxed">
+                 📊 يوضح هذا الجدول تفاصيل الكراتين والحزم المرسلة من المركز لكل مرحلة دراسية بشكل منفصل.
+               </p>
+            </div>
+            <div className="p-6 max-h-[50vh] overflow-y-auto custom-scrollbar text-right">
+               <div className="space-y-2">
+                  {selectedCenterForExported.details.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 font-bold">لا توجد بيانات تصدير مسجلة</div>
+                  ) : (
+                    <div className="overflow-hidden rounded-2xl border border-slate-100">
+                      <table className="w-full text-right text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-100">
+                          <tr>
+                            <th className="px-3 py-2 font-black text-slate-500">المرحلة</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">كرتون</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">حزمة زائدة</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {selectedCenterForExported.details.map((item, idx) => (
+                            <tr key={idx}>
+                              <td className="px-3 py-2 font-black text-slate-700">{item.stageName}</td>
+                              <td className="px-3 py-2 text-center text-indigo-700 font-black">{item.exportedCartons.toLocaleString()}</td>
+                              <td className="px-3 py-2 text-center">
+                                <span className={`px-2 py-0.5 rounded-lg font-black ${item.exportedBundles > 0 ? 'bg-amber-50 text-amber-600' : 'text-slate-300'}`}>
+                                  {item.exportedBundles.toLocaleString()}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+               </div>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100">
+               <button 
+                 onClick={() => { setShowExportedDetailModal(false); setSelectedCenterForExported(null); }}
+                 className="w-full bg-indigo-900 text-white p-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg"
+               >
+                 إغلاق
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReceivedDetailModal && selectedCenterForReceived && (
+        <div className="fixed inset-0 z-[6000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl border-4 border-emerald-600 overflow-hidden">
+            <div className="bg-emerald-600 p-6 text-center">
+               <h3 className="text-xl font-black text-white">تفاصيل إجمالي المستلم</h3>
+               <p className="text-emerald-100 text-xs font-bold mt-1">{selectedCenterForReceived.name}</p>
+            </div>
+            <div className="p-4 bg-emerald-50 border-b border-emerald-100">
+               <p className="text-[10px] font-black text-emerald-800 text-center leading-relaxed">
+                 📥 يوضح هذا الجدول تفاصيل الكراتين والحزم التي تم استلامها وإدخالها للمستودع لكل مرحلة.
+               </p>
+            </div>
+            <div className="p-6 max-h-[50vh] overflow-y-auto custom-scrollbar text-right">
+               <div className="space-y-2">
+                  {selectedCenterForReceived.details.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 font-bold">لا توجد بيانات استلام مسجلة</div>
+                  ) : (
+                    <div className="overflow-hidden rounded-2xl border border-slate-100">
+                      <table className="w-full text-right text-xs">
+                        <thead className="bg-slate-50 border-b border-slate-100">
+                          <tr>
+                            <th className="px-3 py-2 font-black text-slate-500">المرحلة</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">طبلية</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">كرتون</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">حزمة</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {selectedCenterForReceived.details.map((item, idx) => (
+                            <tr key={idx}>
+                              <td className="px-3 py-2 font-black text-slate-700">{item.stageName}</td>
+                              <td className="px-3 py-2 text-center">
+                                <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg font-black">{item.receivedPallets.toLocaleString()}</span>
+                              </td>
+                              <td className="px-3 py-2 text-center text-emerald-700 font-black">{item.receivedCartons.toLocaleString()}</td>
+                              <td className="px-3 py-2 text-center">
+                                <span className={`px-2 py-0.5 rounded-lg font-black ${item.receivedBundles > 0 ? 'bg-amber-50 text-amber-600' : 'text-slate-300'}`}>
+                                  {item.receivedBundles.toLocaleString()}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+               </div>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100">
+               <button 
+                 onClick={() => { setShowReceivedDetailModal(false); setSelectedCenterForReceived(null); }}
+                 className="w-full bg-emerald-900 text-white p-4 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg"
+               >
+                 إغلاق
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showBalanceDetailModal && selectedCenterForBalance && (
         <div className="fixed inset-0 z-[6000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
