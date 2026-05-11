@@ -9,7 +9,8 @@ const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 async function getAll() {
   const typesSnap = await getDocs(collection(db, 'palletTypes'));
   typesSnap.docs.forEach(doc => {
-      console.log(doc.data().stageName);
+      const data = doc.data();
+      console.log(`${data.stageName} | ID: ${doc.id}`);
   });
   process.exit(0);
 }

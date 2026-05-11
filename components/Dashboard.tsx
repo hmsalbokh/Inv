@@ -199,6 +199,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [tripIdToDeleteDist, setTripIdToDeleteDist] = useState<string | null>(null);
   const [showDispatchConfirmModal, setShowDispatchConfirmModal] = useState(false);
   const [tripToDispatch, setTripToDispatch] = useState<string | null>(null);
+  const [showDispatchedTableModal, setShowDispatchedTableModal] = useState(false);
+  const [dispatchedTableSearch, setDispatchedTableSearch] = useState('');
   const [showEmptyCartonsModal, setShowEmptyCartonsModal] = useState(false);
   const [showBalanceDetailModal, setShowBalanceDetailModal] = useState(false);
   const [selectedCenterForBalance, setSelectedCenterForBalance] = useState<{
@@ -1131,6 +1133,33 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     }
   };
 
+  const handleExportDispatchedTable = (tripsToExport: any[]) => {
+    try {
+      const data = tripsToExport.map(t => {
+        const row: any = {
+          'رقم الرحلة': t.tripNumber,
+          'الوجهة': t.destinationCity,
+          'التاريخ': t.date,
+          'المركز': t.originCenter,
+          'الإجمالي (كرتون)': (t.executedQuantities || t.quantities).reduce((acc: number, q: any) => acc + q.cartonCount, 0)
+        };
+        palletTypes.forEach(pt => {
+          const q = (t.executedQuantities || t.quantities).find((qty: any) => qty.palletTypeId === pt.id);
+          row[pt.stageName] = q ? q.cartonCount : 0;
+        });
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "الرحلات المنطلقة");
+      XLSX.writeFile(wb, `Dispatched_Trips_Detailed_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('فشل تصدير التقرير');
+    }
+  };
+
   const handleExportAllPalletsRaw = () => {
     try {
       const data = records.map(r => {
@@ -1156,6 +1185,42 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     } catch (err) {
       console.error(err);
       alert('فشل تصدير بيانات الطبليات');
+    }
+  };
+
+  const handleExportDispatchedTripsDetailedReport = () => {
+    try {
+      // نستخدم consolidatedTrips لضمان عدم وجود نسخ مكررة من نفس الرحلة
+      const dispatchedTrips = consolidatedTrips.filter(t => t.status === 'dispatched' || t.status === 'executed');
+      
+      const data = dispatchedTrips.map(t => {
+        const row: any = {
+          'رقم الرحلة': t.tripNumber,
+          'مركز المنشأ': getDisplayName(t.originCenter),
+          'الوجهة': t.destinationCity,
+          'التاريخ': t.date,
+          'الحالة': t.status === 'executed' ? 'تم التنفيذ' : 'منطلقة (في الطريق)',
+        };
+
+        // إضافة الكميات لكل مرحلة دراسية كأعمدة منفصلة
+        const qList = t.executedQuantities || t.quantities;
+        qList.forEach(q => {
+          const type = palletTypes.find(pt => pt.id === q.palletTypeId);
+          if (type) {
+            row[type.stageName] = (row[type.stageName] || 0) + q.cartonCount;
+          }
+        });
+
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "الرحلات المنطلقة");
+      XLSX.writeFile(wb, `Dispatched_Trips_Detailed_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } catch (err) {
+      console.error(err);
+      alert('فشل تصدير تقرير الرحلات المنطلقة');
     }
   };
 
@@ -1650,6 +1715,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 </button>
                 <button onClick={handleExportAllPalletsRaw} className="px-4 py-2.5 rounded-2xl bg-amber-500/40 backdrop-blur-md border border-amber-500/50 text-white text-[10px] font-black flex items-center gap-2 hover:bg-amber-500/60 transition-all active:scale-95">
                   📦 تصدير أرقام الطبليات (Excel)
+                </button>
+                <button onClick={() => setShowDispatchedTableModal(true)} className="px-4 py-2.5 rounded-2xl bg-indigo-500/40 backdrop-blur-md border border-indigo-500/50 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/60 transition-all active:scale-95">
+                  📋 جدول الرحلات المنطلقة والكميات
                 </button>
               </div>
             </div>
@@ -2525,11 +2593,11 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                                 const stageName = palletTypes.find(t => t.id === q.palletTypeId)?.stageName || 'غير معروف';
                                 if (!stageName.includes('كراتين فارغة')) {
                                   hasNonEmptyCartonShortage = true;
+                                  tripDeficits.push({
+                                    stageName,
+                                    deficit: q.cartonCount - available
+                                  });
                                 }
-                                tripDeficits.push({
-                                  stageName,
-                                  deficit: q.cartonCount - available
-                                });
                               }
                               currentStock[q.palletTypeId] = available - q.cartonCount;
                             });
@@ -2541,11 +2609,11 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                             const isOverdue = trip.date < todayStr;
 
                             return (
-                              <div key={trip.id} className={`p-3 rounded-2xl border transition-all ${isOverdue ? 'bg-rose-50 border-rose-200' : hasShortage ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} flex flex-col gap-2 relative overflow-hidden shadow-sm`}>
+                              <div key={trip.id} className={`p-3 rounded-2xl border transition-all ${isOverdue ? 'bg-rose-50 border-rose-200' : hasNonEmptyCartonShortage ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'} flex flex-col gap-2 relative overflow-hidden shadow-sm`}>
                                 {isOverdue && <div className="absolute top-0 right-0 px-2 py-0.5 bg-rose-600 text-white text-[6px] font-black uppercase rounded-bl-lg animate-pulse">متأخرة</div>}
                                 <div className="flex justify-between items-center">
                                   <div className="text-right">
-                                    <div className={`text-[10px] font-black ${isOverdue ? 'text-rose-900' : hasShortage ? 'text-amber-900' : 'text-emerald-900'}`}>رحلة #{trip.tripNumber}</div>
+                                    <div className={`text-[10px] font-black ${isOverdue ? 'text-rose-900' : hasNonEmptyCartonShortage ? 'text-amber-900' : 'text-emerald-900'}`}>رحلة #{trip.tripNumber}</div>
                                     <div className={`text-[8px] font-bold ${isOverdue ? 'text-rose-500' : 'text-slate-500'}`}>{trip.destinationCity} - {trip.date}</div>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -2559,7 +2627,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                                         </button>
                                       </div>
                                     )}
-                                    {hasShortage ? (
+                                    {hasNonEmptyCartonShortage ? (
                                       <span className="bg-rose-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase shadow-sm">عجز</span>
                                     ) : (
                                       <span className="bg-emerald-600 text-white px-2 py-0.5 rounded-full text-[7px] font-black uppercase shadow-sm">متاح</span>
@@ -2582,7 +2650,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                                     )}
                                   </div>
                                 </div>
-                                {hasShortage && (
+                                {hasNonEmptyCartonShortage && (
                                   <div className="bg-white/50 p-2 rounded-xl border border-rose-100">
                                     <div className="flex flex-wrap gap-1">
                                       {tripDeficits.map((d, i) => (
@@ -2976,6 +3044,98 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
         confirmText="نعم، إطلاق الرحلة"
         cancelText="تراجع"
       />
+
+      {showDispatchedTableModal && (
+        <div className="fixed inset-0 z-[6000] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white w-full max-w-7xl h-[90vh] rounded-[3rem] shadow-2xl border-4 border-indigo-600 flex flex-col overflow-hidden">
+            <div className="bg-indigo-600 p-6 flex justify-between items-center shrink-0">
+              <div className="text-right">
+                <h3 className="text-2xl font-black text-white">جدول الرحلات المنطلقة والكميات التفصيلي</h3>
+                <p className="text-indigo-100 text-sm font-bold">عرض كافة الرحلات التي تم إطلاقها وكميات كل مرحلة</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    placeholder="بحث برقم الرحلة أو الوجهة..."
+                    value={dispatchedTableSearch}
+                    onChange={(e) => setDispatchedTableSearch(e.target.value)}
+                    className="bg-white/10 border border-white/20 text-white placeholder:text-white/50 px-4 py-2 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-white/50 w-64 text-right"
+                  />
+                </div>
+                <button 
+                  onClick={() => {
+                    const filtered = consolidatedTrips.filter(t => 
+                      t.status === 'dispatched' && 
+                      (t.tripNumber.toLowerCase().includes(dispatchedTableSearch.toLowerCase()) || 
+                       t.destinationCity.toLowerCase().includes(dispatchedTableSearch.toLowerCase()))
+                    );
+                    handleExportDispatchedTable(filtered);
+                  }}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl font-black text-xs transition-all flex items-center gap-2 shadow-lg"
+                >
+                  📥 تصدير Excel
+                </button>
+                <button onClick={() => setShowDispatchedTableModal(false)} className="text-white bg-white/10 hover:bg-white/20 p-2 rounded-full transition-all">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto p-4">
+              <div className="inline-block min-w-full align-middle">
+                <div className="overflow-hidden border border-slate-200 rounded-3xl shadow-sm">
+                  <table className="min-w-full divide-y divide-slate-200 text-right">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-4 py-3 text-xs font-black text-slate-500 sticky right-0 bg-slate-50 z-10 border-l">رقم الرحلة</th>
+                        <th className="px-4 py-3 text-xs font-black text-slate-500">الوجهة</th>
+                        <th className="px-4 py-3 text-xs font-black text-slate-500">التاريخ</th>
+                        <th className="px-4 py-3 text-xs font-black text-slate-500">المركز</th>
+                        {palletTypes.map(pt => (
+                          <th key={pt.id} className="px-4 py-3 text-[10px] font-black text-indigo-600 bg-indigo-50/30 whitespace-nowrap">
+                            {pt.stageName}
+                          </th>
+                        ))}
+                        <th className="px-4 py-3 text-xs font-black text-emerald-600 bg-emerald-50">الإجمالي</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-slate-100">
+                      {consolidatedTrips
+                        .filter(t => 
+                          t.status === 'dispatched' && 
+                          (t.tripNumber.toLowerCase().includes(dispatchedTableSearch.toLowerCase()) || 
+                           t.destinationCity.toLowerCase().includes(dispatchedTableSearch.toLowerCase()))
+                        )
+                        .map(trip => {
+                          const tripQtys = trip.executedQuantities || trip.quantities;
+                          const grandTotal = tripQtys.reduce((acc: number, cur: any) => acc + cur.cartonCount, 0);
+                          return (
+                            <tr key={trip.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="px-4 py-3 text-xs font-black text-slate-900 sticky right-0 bg-white border-l hover:bg-slate-50">{trip.tripNumber}</td>
+                              <td className="px-4 py-3 text-[11px] font-bold text-slate-600">{trip.destinationCity}</td>
+                              <td className="px-4 py-3 text-[11px] font-bold text-slate-500">{trip.date}</td>
+                              <td className="px-4 py-3 text-[11px] font-black text-indigo-500">{trip.originCenter}</td>
+                              {palletTypes.map(pt => {
+                                const q = tripQtys.find((qty: any) => qty.palletTypeId === pt.id);
+                                return (
+                                  <td key={pt.id} className={`px-4 py-3 text-[11px] font-black text-center ${q ? 'text-slate-900 bg-indigo-50/10' : 'text-slate-300'}`}>
+                                    {q ? q.cartonCount : '-'}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-4 py-3 text-xs font-black text-emerald-700 bg-emerald-50/30">{grandTotal}</td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showExportedDetailModal && selectedCenterForExported && (
         <div className="fixed inset-0 z-[6000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
