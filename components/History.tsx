@@ -281,7 +281,10 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
             </div>
             <div style="background: black; color: white; padding: ${isLarge ? '8px 12px' : '4px 6px'}; border-radius: 6px; text-align: center;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700;">الرحلة</div>
-               <div style="font-size: ${isLarge ? '32px' : '18px'}; font-weight: 900;">#${tripNumber}</div>
+               <div style="font-size: ${isLarge ? '32px' : '18px'}; font-weight: 900;">
+                  #${tripNumber}
+                  ${trip?.startDate ? `<span style="font-size: ${isLarge ? '14px' : '8px'}; font-weight: 700; display: block; border-top: 1px solid white; margin-top: 2px;">${new Date(trip.startDate).toLocaleDateString('en-GB')}</span>` : ''}
+               </div>
             </div>
          </div>
          <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: ${isLarge ? '12px' : '6px'};">

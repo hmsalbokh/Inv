@@ -6,6 +6,7 @@ import { analyzeInventory } from '../services/geminiService';
 import * as XLSX from 'xlsx';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc, deleteField, getDoc, addDoc } from 'firebase/firestore';
+import AdminReconciliationModal from './AdminReconciliationModal';
 
 interface Props {
   palletTypes: PalletType[];
@@ -200,6 +201,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [showDispatchConfirmModal, setShowDispatchConfirmModal] = useState(false);
   const [tripToDispatch, setTripToDispatch] = useState<string | null>(null);
   const [showDispatchedTableModal, setShowDispatchedTableModal] = useState(false);
+  const [showReconciliationModal, setShowReconciliationModal] = useState(false);
   const [dispatchedTableSearch, setDispatchedTableSearch] = useState('');
   const [showEmptyCartonsModal, setShowEmptyCartonsModal] = useState(false);
   const [showBalanceDetailModal, setShowBalanceDetailModal] = useState(false);
@@ -228,6 +230,24 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     name: string;
     items: { stageName: string; cartons: number }[];
   } | null>(null);
+
+  const [dbStatus, setDbStatus] = useState<'connecting' | 'online' | 'offline'>('connecting');
+
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        const { getDocFromServer } = await import('firebase/firestore');
+        await getDocFromServer(doc(db, 'config', 'health_check')).catch(() => {});
+        setDbStatus('online');
+      } catch (err) {
+        setDbStatus('offline');
+      }
+    };
+    
+    checkConnection();
+    const interval = setInterval(checkConnection, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Consolidated trips to handle duplicates in the database (favoring most advanced status and newest date)
   const consolidatedTrips = useMemo(() => {
@@ -1526,6 +1546,24 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         return acc;
       }, {} as Record<string, Record<string, number>>);
 
+    const shippedOutbound = consolidatedTrips
+      .filter(t => t.status === 'dispatched' || t.status === 'executed')
+      .reduce((acc, t) => {
+        const qtList = t.executedQuantities || t.quantities;
+        qtList.forEach(q => {
+          const type = palletTypes.find(pt => pt.id === q.palletTypeId);
+          if (type) {
+            if (type.stageCode.toUpperCase().startsWith('F')) {
+              acc.emptyCartons += q.cartonCount;
+            } else {
+              acc.bookCartons += q.cartonCount;
+              acc.bookBundles += q.bundleCount || 0;
+            }
+          }
+        });
+        return acc;
+      }, { bookCartons: 0, bookBundles: 0, emptyCartons: 0 });
+
     return { 
       total: statsRecords.length, 
       received: received.length,
@@ -1542,7 +1580,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       totalExtDamagedCartons,
       totalIntDamagedCartons,
       palletsWithDamage: received.filter(r => r.condition && r.condition !== 'intact').length,
-      plannedOutbound
+      plannedOutbound,
+      shippedOutbound
     };
   }, [statsRecords, palletTypes, consolidatedTrips]);
 
@@ -1584,7 +1623,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             </div>
             <div style="background: white; color: black; border: ${isLarge ? '3px' : '2px'} solid black; padding: ${isLarge ? '8px 12px' : '4px 6px'}; border-radius: 6px; text-align: center;">
                <div style="font-size: ${isLarge ? '10px' : '7px'}; font-weight: 700;">الرحلة</div>
-               <div style="font-size: ${isLarge ? '32px' : '18px'}; font-weight: 900;">#${trip?.tripNumber || '---'}</div>
+               <div style="font-size: ${isLarge ? '32px' : '18px'}; font-weight: 900;">
+                  #${trip?.tripNumber || '---'}
+                  ${trip?.startDate ? `<span style="font-size: ${isLarge ? '14px' : '8px'}; font-weight: 700; display: block; border-top: 1px solid black; margin-top: 2px;">${new Date(trip.startDate).toLocaleDateString('en-GB')}</span>` : ''}
+               </div>
             </div>
          </div>
          <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: ${isLarge ? '12px' : '6px'}; padding: 5px 0;">
@@ -1694,6 +1736,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     </button>
                     <button onClick={handleDownloadExecutionTemplate} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95" title="تحميل قالب الرحلات المخططة">
                       📄 تحميل قالب التنفيذ المخطط
+                    </button>
+                    <button onClick={() => setShowReconciliationModal(true)} className="px-6 py-2.5 rounded-2xl bg-rose-500/20 backdrop-blur-md border border-rose-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-rose-500/30 transition-all active:scale-95 shadow-md">
+                      ⚖️ أداة تسوية المخزون
                     </button>
                   </>
                 )}
@@ -2120,6 +2165,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
             <div className="flex justify-between items-center border-b pb-4">
                <h2 className="text-lg font-black text-indigo-900">📊 تقرير التلفيات والمخزون</h2>
+               {dbStatus === 'offline' && <span className="text-[10px] bg-rose-100 text-rose-600 px-3 py-1 rounded-full font-black animate-pulse">⚠️ وضع غير متصل - جاري المحاولة...</span>}
+               {dbStatus === 'online' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full font-black">🟢 متصل بقاعدة البيانات</span>}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100 flex justify-between items-center">
@@ -2128,15 +2175,32 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                    <span className="text-2xl font-black text-emerald-900">{stats.totalBooksCartons.toLocaleString()} كرتون</span>
                 </div>
                 {stats.totalEmptyCartons > 0 && (
-                  <div className="text-left">
-                     <span className="text-[8px] font-bold text-emerald-500/80 block mb-1">فوارغ إضافية</span>
-                     <span className="text-lg font-black text-emerald-700">+{stats.totalEmptyCartons.toLocaleString()}</span>
-                  </div>
+                   <div className="text-left">
+                      <span className="text-[8px] font-bold text-emerald-500/80 block mb-1">فوارغ إضافية</span>
+                      <span className="text-lg font-black text-emerald-700">+{stats.totalEmptyCartons.toLocaleString()}</span>
+                   </div>
                 )}
               </div>
+              <div className="bg-indigo-50 p-5 rounded-3xl text-right border border-indigo-100 flex justify-between items-center">
+                <div>
+                   <span className="text-[9px] font-black text-indigo-400 block mb-1 uppercase">إجمالي المنطلق والمصدر (خروج)</span>
+                   <span className="text-2xl font-black text-indigo-900">{(stats.shippedOutbound.bookCartons + stats.shippedOutbound.emptyCartons).toLocaleString()} كرتون</span>
+                </div>
+                <div className="text-left flex flex-col items-end">
+                   <span className="text-[7px] font-black text-indigo-500 bg-white/50 px-2 rounded-full mb-1">كتب: {stats.shippedOutbound.bookCartons.toLocaleString()}</span>
+                   <span className="text-[7px] font-black text-amber-600 bg-white/50 px-2 rounded-full">فوارغ: {stats.shippedOutbound.emptyCartons.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100">
                 <span className="text-[9px] font-black text-emerald-400 block mb-1 uppercase">إجمالي الحزم المستلمة</span>
                 <span className="text-2xl font-black text-emerald-700">{stats.totalBundles.toLocaleString()} حزمة</span>
+              </div>
+              <div className="bg-indigo-50 p-5 rounded-3xl text-right border border-indigo-100">
+                <span className="text-[9px] font-black text-indigo-400 block mb-1 uppercase">الرصيد المتبقي المتاح (حر)</span>
+                <span className="text-2xl font-black text-indigo-900">{(stats.totalBooksCartons - stats.shippedOutbound.bookCartons).toLocaleString()} كرتون</span>
               </div>
             </div>
 
@@ -2367,7 +2431,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                       onClick={() => {
                         const details: { stageName: string; exportedCartons: number; exportedBundles: number }[] = [];
                         
-                        palletTypes.filter(t => !t.stageCode.toUpperCase().startsWith('F')).forEach(type => {
+                        palletTypes.forEach(type => {
                           let stageShippedCartons = 0;
                           let stageShippedBundles = 0;
                           
@@ -2375,8 +2439,8 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                             const q = (et.executedQuantities || et.quantities).find(qty => qty.palletTypeId === type.id);
                             if (q) {
                               stageShippedCartons += q.cartonCount;
-                              stageShippedBundles += (q.bundleCount || 0) % type.bundlesPerCarton;
-                              // ملاحظة: الحزم الزائدة هي ما زاد عن الكرتونة الكاملة
+                              const bPerC = type.bundlesPerCarton || 1;
+                              stageShippedBundles += (q.bundleCount || 0) % bPerC;
                             }
                           });
 
@@ -2402,8 +2466,11 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                     >
                       <span className="text-[8px] font-black text-indigo-400 uppercase block">تم التصدير (خروج)</span>
                       <div className="flex flex-col items-center">
-                        <span className="text-sm font-black text-indigo-900">{exportedBookCartons.toLocaleString()} كرتون</span>
-                        <span className="text-[10px] font-black text-indigo-700/70">{exportedExtraBundles.toLocaleString()} حزمة زائدة</span>
+                        <span className="text-sm font-black text-indigo-900">{(exportedBookCartons + exportedEmptyCartons).toLocaleString()} كرتون</span>
+                        <div className="flex gap-1 items-center">
+                           <span className="text-[8px] font-bold text-indigo-600 bg-indigo-100 px-1 rounded">{exportedBookCartons.toLocaleString()} كتب</span>
+                           {exportedEmptyCartons > 0 && <span className="text-[8px] font-bold text-amber-600 bg-amber-100 px-1 rounded">{exportedEmptyCartons.toLocaleString()} فوارغ</span>}
+                        </div>
                       </div>
                     </div>
                     <div 
@@ -3066,7 +3133,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                 <button 
                   onClick={() => {
                     const filtered = consolidatedTrips.filter(t => 
-                      t.status === 'dispatched' && 
+                      (t.status === 'dispatched' || t.status === 'executed') && 
                       (t.tripNumber.toLowerCase().includes(dispatchedTableSearch.toLowerCase()) || 
                        t.destinationCity.toLowerCase().includes(dispatchedTableSearch.toLowerCase()))
                     );
@@ -3103,7 +3170,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                     <tbody className="bg-white divide-y divide-slate-100">
                       {consolidatedTrips
                         .filter(t => 
-                          t.status === 'dispatched' && 
+                          (t.status === 'dispatched' || t.status === 'executed') && 
                           (t.tripNumber.toLowerCase().includes(dispatchedTableSearch.toLowerCase()) || 
                            t.destinationCity.toLowerCase().includes(dispatchedTableSearch.toLowerCase()))
                         )
@@ -3129,6 +3196,41 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                           );
                         })}
                     </tbody>
+                    <tfoot className="bg-slate-100 border-t-2 border-slate-200">
+                       <tr className="font-black text-slate-900">
+                          <td colSpan={4} className="px-4 py-3 text-sm text-center sticky right-0 bg-slate-100 z-10 border-l">الإجمالي العام</td>
+                          {palletTypes.map(pt => {
+                             const totalForStage = consolidatedTrips
+                               .filter(t => 
+                                 (t.status === 'dispatched' || t.status === 'executed') && 
+                                 (t.tripNumber.toLowerCase().includes(dispatchedTableSearch.toLowerCase()) || 
+                                  t.destinationCity.toLowerCase().includes(dispatchedTableSearch.toLowerCase()))
+                               )
+                               .reduce((acc, t) => {
+                                 const q = (t.executedQuantities || t.quantities).find(qty => qty.palletTypeId === pt.id);
+                                 return acc + (q?.cartonCount || 0);
+                               }, 0);
+                             return (
+                               <td key={`footer-${pt.id}`} className="px-4 py-3 text-[11px] text-center text-indigo-700 bg-indigo-50/30">
+                                 {totalForStage.toLocaleString()}
+                               </td>
+                             );
+                          })}
+                          <td className="px-4 py-3 text-xs text-emerald-700 bg-emerald-100">
+                             {consolidatedTrips
+                               .filter(t => 
+                                 (t.status === 'dispatched' || t.status === 'executed') && 
+                                 (t.tripNumber.toLowerCase().includes(dispatchedTableSearch.toLowerCase()) || 
+                                  t.destinationCity.toLowerCase().includes(dispatchedTableSearch.toLowerCase()))
+                               )
+                               .reduce((acc, t) => {
+                                  const tripQtys = t.executedQuantities || t.quantities;
+                                  return acc + tripQtys.reduce((sum: number, q: any) => sum + q.cartonCount, 0);
+                               }, 0).toLocaleString()
+                             }
+                          </td>
+                       </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
@@ -3316,6 +3418,17 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
             </div>
           </div>
         </div>
+      )}
+
+      {showReconciliationModal && (
+        <AdminReconciliationModal
+          onClose={() => setShowReconciliationModal(false)}
+          onNotify={onNotify}
+          palletTypes={palletTypes}
+          trips={consolidatedTrips}
+          records={statsRecords}
+          centerOps={centerOptions}
+        />
       )}
 
       {showEmptyCartonsModal && selectedCenterForEmpty && (
