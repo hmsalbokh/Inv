@@ -26,6 +26,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const [dateFilter, setDateFilter] = useState('');
   const [palletTypeFilter, setPalletTypeFilter] = useState<string | 'ALL'>('ALL');
   const [showDamagedOnly, setShowDamagedOnly] = useState(false);
+  const [showWrongDestinationsOnly, setShowWrongDestinationsOnly] = useState(false);
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
   const [batchPrintTripId, setBatchPrintTripId] = useState<string | null>(null);
   const [selectedSize, setSelectedSize] = useState<LabelSize>('10x15');
@@ -139,9 +140,12 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
 
   // جلب اسم المنشأة ديناميكياً
   const getEntityName = (code: string) => {
-     const u = users.find(u => u.code === code);
+     if (!code) return 'غير معروف';
+     const normCode = code.trim().toUpperCase();
+     if (normCode === 'MISDIRECTED_CORRECTED' || normCode === 'WRONG_DEST') return 'توجيه خاطئ';
+     const u = users.find(u => u.code.trim().toUpperCase() === normCode);
      if (!u) return code;
-     let name = u.locationName || u.displayName;
+     let name = u.locationName || u.displayName || code;
 
      // Explicit fixes for main centers
      if (u.code === 'DMM' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز الدمام';
@@ -182,22 +186,23 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
 
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
-    const unique = new Map();
+    const unique = new Map<string, UserCredentials & { displayName: string }>();
     const sortedCenters = [...centers].sort((a, b) => {
-      const aHasLocation = a.locationName && a.locationName.trim() !== '';
-      const bHasLocation = b.locationName && b.locationName.trim() !== '';
+      const aHasLocation = !!(a.locationName && a.locationName.trim());
+      const bHasLocation = !!(b.locationName && b.locationName.trim());
       if (aHasLocation && !bHasLocation) return -1;
       if (!aHasLocation && bHasLocation) return 1;
       return 0;
     });
 
     sortedCenters.forEach(c => {
-      if(!unique.has(c.code)) {
-        let finalName = c.locationName || c.displayName;
-        if (c.code === 'DMM' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الدمام';
-        if (c.code === 'RYD' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الرياض';
-        if (c.code === 'JED' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز جدة';
-        unique.set(c.code, { ...c, displayName: finalName });
+      const normalizedCode = (c.code || '').trim().toUpperCase();
+      if (normalizedCode && !unique.has(normalizedCode)) {
+        let finalName = c.locationName || c.displayName || c.username;
+        if (normalizedCode === 'DMM' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الدمام';
+        if (normalizedCode === 'RYD' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الرياض';
+        if (normalizedCode === 'JED' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز جدة';
+        unique.set(normalizedCode, { ...c, code: normalizedCode, displayName: finalName });
       }
     });
     return Array.from(unique.values());
@@ -223,16 +228,44 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       if (record.status === 'cancelled' && !isAdmin) return false;
 
       let isVisible = false;
-      if (role === 'monitor') isVisible = true;
-      else if (role === 'factory') isVisible = record.palletBarcode.includes(userCode);
-      else if (role === 'center' && userCenter) isVisible = record.destination === userCenter;
+      if (isAdmin || role === 'monitor') isVisible = true;
+      else if (role === 'factory') isVisible = (record.palletBarcode || '').includes(userCode);
+      else if (role === 'center' && userCenter) {
+        const barcode = (record.palletBarcode || '').trim().toUpperCase();
+        // أخفِ سجلات التسوية اليدوية والمخزون الإضافي والزيادات المكتشفة عن مدراء المراكز
+        if ((record.notes && (record.notes.includes('تسوية') || record.notes.includes('زيادة'))) || record.isExtraOnly || barcode.startsWith('ADJ-')) {
+          isVisible = false;
+        } else {
+          const targetCenter = (record.receivedByCenter || (record.status === 'received' && record.isWrongDestination ? 'WRONG_DEST' : record.destination)).trim().toUpperCase();
+          const DAMMAM_MISDIRECTED_BARCODES = [
+            'G01YOM1177316', 'G01YOM1177416', 'G01YOM1177516', 'G01YOM1177616', 'G01YOM1177716',
+            'G02YOM1177816', 'G02YOM1177916', 'G02YOM1178016',
+            'G03YOM1178116',
+            'G05YOM1178216', 'G05YOM1178316', 'G05YOM1178416', 'G05YOM1178516', 'G05YOM1178616', 'G05YOM1178716', 'G05YOM1178816',
+            'G06YOM1178916', 'G06YOM1179016', 'G06YOM1179116', 'G06YOM1179216',
+            'G07YOM1179316', 'G07YOM1179416', 'G07YOM1179516'
+          ];
+          let finalTarget = targetCenter;
+          const barcode = (record.palletBarcode || '').trim().toUpperCase();
+          if ((finalTarget === 'DAMMAM' || finalTarget === 'DMM') && barcode && DAMMAM_MISDIRECTED_BARCODES.includes(barcode)) {
+            finalTarget = 'WRONG_DEST';
+          }
+          isVisible = finalTarget === userCenter.trim().toUpperCase();
+        }
+      }
       
       const trip = trips.find(t => t.id === record.tripId);
       
-      if (isVisible && role !== 'center' && destinationFilter !== 'ALL') isVisible = record.destination === destinationFilter;
+      if (isVisible && role !== 'center' && destinationFilter !== 'ALL') {
+        const targetCenter = (record.receivedByCenter || (record.status === 'received' && record.isWrongDestination ? 'WRONG_DEST' : record.destination)).trim().toUpperCase();
+        isVisible = targetCenter === destinationFilter.trim().toUpperCase();
+      }
       if (isVisible && statusFilter !== 'ALL') isVisible = record.status === statusFilter;
       if (isVisible && showDamagedOnly) isVisible = (record.condition && record.condition !== 'intact') || record.hasDiscrepancy;
       
+      const isActuallyWrongDest = record.isWrongDestination || (record.notes && record.notes.includes('توجيه خاطئ'));
+      if (isVisible && showWrongDestinationsOnly) isVisible = !!isActuallyWrongDest;
+
       // Search Filter
       if (isVisible && searchQuery) {
         const query = searchQuery.toLowerCase().trim();
@@ -553,6 +586,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
             <div className="w-px h-6 bg-slate-200 mx-1 flex-shrink-0"></div>
             
             <button onClick={() => setShowDamagedOnly(!showDamagedOnly)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${showDamagedOnly ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 border border-rose-100 text-rose-600'}`}>⚠️ المتضرر</button>
+            <button onClick={() => setShowWrongDestinationsOnly(!showWrongDestinationsOnly)} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${showWrongDestinationsOnly ? 'bg-orange-600 text-white border-orange-600' : 'bg-orange-50 border border-orange-100 text-orange-600'}`}>⚠️ توجيه خاطئ</button>
 
             <button 
               onClick={() => {
@@ -562,6 +596,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                 setStatusFilter('ALL');
                 setDestinationFilter('ALL');
                 setShowDamagedOnly(false);
+                setShowWrongDestinationsOnly(false);
               }}
               className="px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all bg-slate-100 text-slate-500 hover:bg-slate-200"
             >
@@ -611,6 +646,9 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                          </span>
                        )}
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${cond.color}`}>{cond.text}</span>
+                       {(record.isWrongDestination || (record.notes && record.notes.includes('توجيه خاطئ'))) && (
+                         <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">🚩 توجيه خاطئ</span>
+                       )}
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${
                          record.status === 'received' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
                          record.status === 'in_transit' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 
@@ -623,6 +661,29 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                           'بانتظار التحميل'}
                        </span>
                     </div>
+                    
+                    {(() => {
+                      const isWrong = record.isWrongDestination || 
+                                     (record.receivedByCenter && record.receivedByCenter.trim().toUpperCase() !== record.destination.trim().toUpperCase()) ||
+                                     (record.notes && record.notes.includes('توجيه خاطئ'));
+
+                      if (isWrong) {
+                        return (
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 p-1.5 bg-orange-50/50 rounded-lg border border-dashed border-orange-200">
+                            <span className="text-[8px] font-black text-slate-400">الوجهة: <span className="text-indigo-600">{getEntityName(record.destination)}</span></span>
+                            <span className="text-[8px] font-bold text-slate-300">←</span>
+                            <span className="text-[8px] font-black text-slate-400">استلمت في: <span className="text-orange-600">{record.receivedByCenter ? getEntityName(record.receivedByCenter) : 'مركز آخر'}</span></span>
+                            {record.receivedByUsername && (
+                              <>
+                                <span className="text-[8px] font-bold text-slate-300 mx-1">|</span>
+                                <span className="text-[8px] font-black text-slate-400">بواسطة: <span className="text-emerald-600">{record.receivedByUsername}</span></span>
+                              </>
+                            )}
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -665,6 +726,39 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                          <span className="text-[10px] font-bold text-slate-800 block text-right">{getEntityName(record.destination)}</span>
                       </div>
                     </div>
+
+                    {(() => {
+                      const isWrong = record.isWrongDestination || 
+                                     (record.receivedByCenter && record.receivedByCenter.trim().toUpperCase() !== record.destination.trim().toUpperCase()) ||
+                                     (record.notes && record.notes.includes('توجيه خاطئ'));
+
+                      if (isWrong) {
+                        return (
+                          <div className="bg-orange-50 border border-orange-100 p-4 rounded-[1.5rem] space-y-2">
+                            <div className="flex items-center gap-2 text-orange-700 font-black text-[11px]">
+                              <span>🚩 تفاصيل التوجيه الخاطئ</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 mt-1">
+                              <div className="bg-white p-2 rounded-xl text-right border border-orange-200">
+                                 <span className="text-[8px] font-black text-slate-400 block mb-0.5">الوجهة المقررة</span>
+                                 <span className="text-xs font-black text-indigo-700">{getEntityName(record.destination)}</span>
+                              </div>
+                              <div className="bg-white p-2 rounded-xl text-right border border-orange-200">
+                                 <span className="text-[8px] font-black text-slate-400 block mb-0.5">مكان الاستلام الفعلي</span>
+                                 <span className="text-xs font-black text-orange-700">{record.receivedByCenter ? getEntityName(record.receivedByCenter) : 'غير مسجل'}</span>
+                              </div>
+                              {record.receivedByUsername && (
+                                <div className="bg-white p-2 rounded-xl text-right border border-orange-200 col-span-2">
+                                   <span className="text-[8px] font-black text-slate-400 block mb-0.5">المستلم بواسطة (اسم المستخدم)</span>
+                                   <span className="text-xs font-black text-emerald-700">{record.receivedByUsername}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
 
                     {/*Timeline Movement Log*/}
                     <div className="bg-slate-50 p-5 rounded-[2.5rem] border border-slate-100 space-y-4">
@@ -815,7 +909,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                       </div>
                     )}
 
-                    {record.hasDiscrepancy && (
+                    {(isAdmin || role === 'monitor') && record.hasDiscrepancy && (
                       <div className="bg-amber-50 border border-amber-100 p-4 rounded-3xl space-y-3">
                          <span className="text-[11px] font-black text-amber-800 block text-right">⚖️ تقرير التباين (نقص/زيادة)</span>
                          <div className="grid grid-cols-2 gap-2">

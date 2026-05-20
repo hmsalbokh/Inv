@@ -72,7 +72,10 @@ export const Scanner: React.FC<Props> = ({ onScan, currentTruck, onTruckChange, 
   const pendingCodes = records.filter(r => {
     if (r.status === 'cancelled') return false; 
     if (role === 'factory') return r.tripId === currentTripId && r.status === 'pending';
-    if (role === 'center') return r.destination === userCenter && r.status === 'in_transit';
+    if (role === 'center') {
+      const uCenterStr = (userCenter || '').trim().toUpperCase();
+      return r.destination.trim().toUpperCase() === uCenterStr && r.status === 'in_transit';
+    }
     return false;
   });
 

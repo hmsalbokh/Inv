@@ -21,26 +21,25 @@ export const Login: React.FC<Props> = ({ users, onLogin }) => {
 
   const groupedEntities = useMemo(() => {
     if (!category) return [];
-    const uniqueCodes = new Map();
+    const uniqueCodes = new Map<string, { code: string, label: string }>();
     users.filter(u => u.role === category).forEach(u => {
-      if (!uniqueCodes.has(u.code)) {
+      const normCode = (u.code || '').trim().toUpperCase();
+      if (normCode && !uniqueCodes.has(normCode)) {
         // Find best display name for this code
-        let baseName = u.displayName;
+        let baseName = u.displayName || u.username;
         if (baseName.includes('(')) {
            baseName = baseName.split('(')[1].replace(')', '').trim();
-           // if standard format we might just use the code
         } else {
-           // extract center name without user specific if possible, or just default to nice names
            if (category === 'center') {
-             if (u.code === 'DMM') baseName = 'مركز الدمام';
-             else if (u.code === 'RYD') baseName = 'مركز الرياض';
-             else if (u.code === 'JED') baseName = 'مركز جدة';
+             if (normCode === 'DMM') baseName = 'مركز الدمام';
+             else if (normCode === 'RYD') baseName = 'مركز الرياض';
+             else if (normCode === 'JED') baseName = 'مركز جدة';
            } else if (category === 'factory') {
-             if (u.code === 'OPK') baseName = 'مطبعة العبيكان';
-             else if (u.code === 'UNI') baseName = 'المطبعة المتحدة';
+             if (normCode === 'OPK') baseName = 'مطبعة العبيكان';
+             else if (normCode === 'UNI') baseName = 'المطبعة المتحدة';
            }
         }
-        uniqueCodes.set(u.code, { code: u.code, label: baseName });
+        uniqueCodes.set(normCode, { code: normCode, label: baseName });
       }
     });
     return Array.from(uniqueCodes.values());
@@ -96,7 +95,7 @@ export const Login: React.FC<Props> = ({ users, onLogin }) => {
 
         {category ? (
           <form onSubmit={handleLogin} className="space-y-4 animate-slideDown">
-             <select value={selectedEntityId} onChange={e => setSelectedEntityId(e.target.value)} className="w-full p-5 rounded-2xl bg-slate-50 font-black text-xs outline-none border-2 border-slate-100 focus:border-indigo-500 transition-colors">
+             <select value={selectedEntityId} onChange={e => setSelectedEntityId(e.target.value)} className="w-full p-5 rounded-2xl bg-white font-black text-xs text-black outline-none border-2 border-slate-100 focus:border-indigo-500 transition-colors shadow-sm">
                 <option value="">اختر المركز / الجهة...</option>
                 {groupedEntities.map(g => <option key={g.code} value={g.code}>{g.label}</option>)}
              </select>
