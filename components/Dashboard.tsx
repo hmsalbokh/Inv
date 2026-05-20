@@ -441,10 +441,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     return (isCanViewAll) ? baseRecords : baseRecords.filter(r => {
       if (role === 'factory') return r.palletBarcode.includes(userCode);
       if (role === 'center') {
-        const userCodeComp = userCenter.trim().toUpperCase();
+        const userCodeComp = (userCenter || '').trim().toUpperCase();
         // If received, it belongs to receivedByCenter. 
         // If received incorrectly and we don't know where, it doesn't belong to the destination anymore.
-        let recordCodeComp = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : r.destination)).trim().toUpperCase();
+        let recordCodeComp = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : (r.destination || ''))).trim().toUpperCase();
         
         // Hard fix for the 23 pallets that Dammam center didn't receive
         const barcode = (r.palletBarcode || '').trim().toUpperCase();
@@ -598,7 +598,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         const batch = writeBatch(db);
         let matchCount = 0;
 
-        const allSystemTrips = consolidatedTrips.map(t => t.tripNumber.trim().toLowerCase());
+        const allSystemTrips = consolidatedTrips.map(t => (t.tripNumber || '').trim().toLowerCase());
         console.log("Actual Upload Debug: Total rows in Excel:", data.length);
         console.log("Actual Upload Debug: System trip numbers (lowercase):", allSystemTrips);
         
@@ -931,7 +931,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     try {
       if (editingTripId) {
         await updateDoc(doc(db, 'distributionTrips', editingTripId), {
-          tripNumber: distTripData.tripNumber.trim(),
+          tripNumber: (distTripData.tripNumber || '').trim(),
           date: distTripData.date,
           originCenter: distTripData.originCenter,
           destinationCity: distTripData.destinationCity,
@@ -1058,11 +1058,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
     centerOptions.forEach(center => {
       const centerRecords = statsRecords.filter(r => {
-        const compareCode = center.code.trim().toUpperCase();
-        let recordCenterCode = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : r.destination)).trim().toUpperCase();
+        const compareCode = (center.code || '').trim().toUpperCase();
+        let recordCenterCode = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : (r.destination || ''))).trim().toUpperCase();
         
         // Hard fix for the 23 pallets that Dammam center didn't receive
-        if ((recordCenterCode === 'DAMMAM' || recordCenterCode === 'DMM') && DAMMAM_MISDIRECTED_BARCODES.includes(r.palletBarcode.trim().toUpperCase())) {
+        if ((recordCenterCode === 'DAMMAM' || recordCenterCode === 'DMM') && DAMMAM_MISDIRECTED_BARCODES.includes((r.palletBarcode || '').trim().toUpperCase())) {
           recordCenterCode = 'WRONG_DEST';
         }
 
@@ -1073,7 +1073,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       if (isDateFiltered) {
         // Mode: Trips with deficit in date range
         const centerTrips = consolidatedTrips
-          .filter(t => t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase())
+          .filter(t => (t.originCenter || '').trim().toUpperCase() === (center.code || '').trim().toUpperCase())
           .sort((a, b) => a.date.localeCompare(b.date));
 
         // Initial stock calculation per pallet type for the center
@@ -1156,7 +1156,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
           let typeExportedCartons = 0;
           let typeExportedBundles = 0;
           const centerExecutedTrips = consolidatedTrips.filter(t => 
-            t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+            (t.originCenter || '').trim().toUpperCase() === (center.code || '').trim().toUpperCase() && 
             (t.status === 'executed' || t.status === 'dispatched')
           );
           centerExecutedTrips.forEach(et => {
@@ -1599,7 +1599,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     
     // Filter trips for the current center if restricted
     const filteredTrips = isCanViewAll ? consolidatedTrips : consolidatedTrips.filter(t => 
-      t.originCenter.trim().toUpperCase() === userCenter.trim().toUpperCase()
+      (t.originCenter || '').trim().toUpperCase() === (userCenter || '').trim().toUpperCase()
     );
 
     const stageSummary = palletTypes.map(type => {
@@ -2495,11 +2495,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               })
               .map(center => {
               const centerRecords = statsRecords.filter(r => {
-                const compareCode = center.code.trim().toUpperCase();
-                let recordCenterCode = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : r.destination)).trim().toUpperCase();
+                const compareCode = (center.code || '').trim().toUpperCase();
+                let recordCenterCode = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : (r.destination || ''))).trim().toUpperCase();
                 
                 // Hard fix for the 23 pallets that Dammam center didn't receive
-                if ((recordCenterCode === 'DAMMAM' || recordCenterCode === 'DMM') && DAMMAM_MISDIRECTED_BARCODES.includes(r.palletBarcode.trim().toUpperCase())) {
+                if ((recordCenterCode === 'DAMMAM' || recordCenterCode === 'DMM') && DAMMAM_MISDIRECTED_BARCODES.includes((r.palletBarcode || '').trim().toUpperCase())) {
                   recordCenterCode = 'WRONG_DEST';
                 }
 
@@ -2508,7 +2508,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               const receivedRecords = centerRecords.filter(r => r.status === 'received');
               
               const centerExecutedTripsForCalc = consolidatedTrips.filter(t => 
-                t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                (t.originCenter || '').trim().toUpperCase() === (center.code || '').trim().toUpperCase() && 
                 (t.status === 'executed' || t.status === 'dispatched')
               );
 
@@ -2568,7 +2568,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               
               const centerPlannedTrips = consolidatedTrips
                 .filter(t => 
-                  t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                  (t.originCenter || '').trim().toUpperCase() === (center.code || '').trim().toUpperCase() && 
                   t.status === 'planned'
                 )
                 .sort((a, b) => a.date.localeCompare(b.date)); // الأقدم أولاً للمخطط
@@ -2869,7 +2869,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                             
                             // خصم الرحلات المنفذة أو المرسلة فعلياً لكي يظهر الرصيد المتبقي بشكل دقيق
                             const centerExecutedTrips = consolidatedTrips.filter(t => 
-                              t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                              (t.originCenter || '').trim().toUpperCase() === (center.code || '').trim().toUpperCase() && 
                               t.status !== 'planned'
                             );
                             centerExecutedTrips.forEach(et => {
@@ -2976,7 +2976,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                     {(() => {
                       const centerExecutedTrips = consolidatedTrips
                         .filter(t => 
-                          t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                          (t.originCenter || '').trim().toUpperCase() === (center.code || '').trim().toUpperCase() && 
                           (t.status === 'executed' || t.status === 'dispatched')
                         )
                         .sort((a, b) => {
