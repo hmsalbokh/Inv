@@ -5,6 +5,7 @@ import { Dashboard, SubulLogo } from './components/Dashboard';
 import { Scanner } from './components/Scanner';
 import { Settings } from './components/Settings';
 import { History } from './components/History';
+import { Lab } from './components/Lab';
 import { Login } from './components/Login';
 import { ConfirmModal } from './components/ConfirmModal';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
@@ -89,7 +90,7 @@ export const App: React.FC = () => {
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [users, setUsers] = useState<UserCredentials[]>(DEFAULT_USERS);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'scan' | 'history' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'scan' | 'history' | 'settings' | 'lab'>('dashboard');
   const [palletTypes, setPalletTypes] = useState<PalletType[]>(DEFAULT_TYPES);
   const [records, setRecords] = useState<InventoryRecord[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -355,10 +356,10 @@ export const App: React.FC = () => {
       } else if (currentUser.role === 'center') {
         if (record.status === 'received') return { success: false, message: 'هذه الطبلية مستلمة مسبقاً' };
         
-        const isWrongDestination = record.destination !== currentUser.code;
+        const isWrongDestination = record.destination.trim().toUpperCase() !== currentUser.code.trim().toUpperCase();
         const wasPending = record.status === 'pending';
         
-        const destCenterName = users.find(u => u.code === record.destination)?.displayName || record.destination;
+        const destCenterName = users.find(u => u.code.trim().toUpperCase() === record.destination.trim().toUpperCase())?.displayName || record.destination;
         
         if (isWrongDestination) {
           successMessage = `تم الاستلام (تنبيه: هذه الطبلية تخص ${destCenterName})`;
@@ -372,12 +373,15 @@ export const App: React.FC = () => {
           wasPending ? '[تم الاستلام بدون مسح في المطبعة]' : '',
           isWrongDestination ? `[توجيه خاطئ: تخص ${destCenterName}]` : ''
         ].filter(Boolean).join(' ');
-
+  
         updates = { 
           status: 'received', 
           timestamp: Date.now(), 
           centerTimestamp: Date.now(), 
           scannedBy: 'center', 
+          isWrongDestination: isWrongDestination,
+          receivedByCenter: currentUser.code,
+          receivedByUsername: currentUser.displayName || currentUser.username,
           condition: conditionData?.condition || 'intact', 
           externalDamageQty: conditionData?.externalDamageQty ?? 0, 
           internalDamageQty: conditionData?.internalDamageQty ?? 0, 
@@ -696,6 +700,17 @@ export const App: React.FC = () => {
         )}
         {activeTab === 'scan' && <Scanner onScan={handleScan} role={currentUser.role} currentTruck={currentTruckNumber} onTruckChange={setCurrentTruckNumber} currentTripId={currentTripId} records={records} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} palletTypes={palletTypes} onNotify={(title, msg) => setShowNotification({ title, msg })} />}
         {activeTab === 'history' && <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} onNotify={(title, msg) => setShowNotification({ title, msg })} />}
+        {activeTab === 'lab' && currentUser.code === 'ADMIN' && (
+          <Lab 
+            records={records}
+            trips={trips}
+            palletTypes={palletTypes}
+            users={users}
+            currentUser={currentUser}
+            distributionTrips={distributionTrips}
+            onNotify={(title, msg) => setShowNotification({ title, msg })}
+          />
+        )}
         {activeTab === 'settings' && currentUser.code === 'ADMIN' && (
           <Settings 
             palletTypes={palletTypes} 
@@ -751,6 +766,7 @@ export const App: React.FC = () => {
           <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} label="📊 الرئيسية" />
           {currentUser.role !== 'monitor' && <NavItem active={activeTab === 'scan'} onClick={() => setActiveTab('scan')} label="📷 مسح" /> }
           <NavItem active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="📋 السجل" />
+          {currentUser.code === 'ADMIN' && <NavItem active={activeTab === 'lab'} onClick={() => setActiveTab('lab')} label="🧪 المختبر" />}
           {currentUser.code === 'ADMIN' && <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="⚙️ الإعدادات" /> }
         </div>
       </nav>

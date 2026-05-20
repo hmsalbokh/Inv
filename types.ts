@@ -50,6 +50,9 @@ export interface InventoryRecord {
   extraCartons?: number;
   missingCartons?: number;
   isExtraOnly?: boolean;
+  isWrongDestination?: boolean;
+  receivedByCenter?: CenterCode;
+  receivedByUsername?: string;
   localOnly?: boolean; 
   cancelledAt?: number;
 }

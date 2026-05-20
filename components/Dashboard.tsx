@@ -3,10 +3,47 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { ConfirmModal } from './ConfirmModal';
 import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, UserCredentials, DistributionTrip } from '../types';
 import { analyzeInventory } from '../services/geminiService';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx-js-style';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc, deleteField, getDoc, addDoc } from 'firebase/firestore';
 import AdminReconciliationModal from './AdminReconciliationModal';
+import ReconciliationComparison from './ReconciliationComparison';
+
+const applyBarcodeStyleToSheet = (ws: any, headerName: string) => {
+  if (!ws || !ws['!ref']) return;
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  let barcodeColIndex = -1;
+
+  for (let C = range.s.c; C <= range.e.c; ++C) {
+    const address = XLSX.utils.encode_col(C) + '1';
+    if (ws[address]?.v === headerName) {
+      barcodeColIndex = C;
+      break;
+    }
+  }
+
+  if (barcodeColIndex === -1) return;
+
+  for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+    const address = XLSX.utils.encode_cell({ r: R, c: barcodeColIndex });
+    if (ws[address]) {
+      ws[address].s = {
+        font: {
+          name: 'Libre Barcode 39',
+          sz: 28
+        },
+        alignment: {
+          vertical: 'center',
+          horizontal: 'center'
+        }
+      };
+    }
+  }
+  
+  // Set column width to be wider for barcode
+  if (!ws['!cols']) ws['!cols'] = [];
+  ws['!cols'][barcodeColIndex] = { wch: 30 };
+};
 
 interface Props {
   palletTypes: PalletType[];
@@ -191,6 +228,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [selectedTripForControl, setSelectedTripForControl] = useState<string>('');
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [tripIdToCancel, setTripIdToCancel] = useState<string | null>(null);
+  const [showFixMisdirectedModal, setShowFixMisdirectedModal] = useState(false);
+  const [misdirectedBarcodesStr, setMisdirectedBarcodesStr] = useState('');
+  const [isApplyingFix, setIsApplyingFix] = useState(false);
   const [showRestoreTripModal, setShowRestoreTripModal] = useState(false);
   const [tripIdToRestore, setTripIdToRestore] = useState<string | null>(null);
   const [showCancelledInControl, setShowCancelledInControl] = useState(false);
@@ -202,6 +242,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const [tripToDispatch, setTripToDispatch] = useState<string | null>(null);
   const [showDispatchedTableModal, setShowDispatchedTableModal] = useState(false);
   const [showReconciliationModal, setShowReconciliationModal] = useState(false);
+  const [showComparisonModal, setShowComparisonModal] = useState(false);
   const [dispatchedTableSearch, setDispatchedTableSearch] = useState('');
   const [showEmptyCartonsModal, setShowEmptyCartonsModal] = useState(false);
   const [showBalanceDetailModal, setShowBalanceDetailModal] = useState(false);
@@ -326,25 +367,26 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
 
   const centerOptions = useMemo(() => {
     const centers = users.filter(u => u.role === 'center');
-    const uniqueCenters = new Map();
+    const uniqueCenters = new Map<string, UserCredentials & { displayName: string }>();
     
     // Sort to handle those with locationName first
     const sortedCenters = [...centers].sort((a, b) => {
-      const aHasLocation = a.locationName && a.locationName.trim() !== '';
-      const bHasLocation = b.locationName && b.locationName.trim() !== '';
+      const aHasLocation = !!(a.locationName && a.locationName.trim());
+      const bHasLocation = !!(b.locationName && b.locationName.trim());
       if (aHasLocation && !bHasLocation) return -1;
       if (!aHasLocation && bHasLocation) return 1;
       return 0;
     });
 
     sortedCenters.forEach(c => {
-      if (!uniqueCenters.has(c.code)) {
-        let finalName = c.locationName || c.displayName;
-        if (c.code === 'DMM' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الدمام';
-        if (c.code === 'RYD' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الرياض';
-        if (c.code === 'JED' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز جدة';
+      const normalizedCode = (c.code || '').trim().toUpperCase();
+      if (normalizedCode && !uniqueCenters.has(normalizedCode)) {
+        let finalName = c.locationName || c.displayName || c.username;
+        if (normalizedCode === 'DMM' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الدمام';
+        if (normalizedCode === 'RYD' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الرياض';
+        if (normalizedCode === 'JED' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز جدة';
         
-        uniqueCenters.set(c.code, { ...c, displayName: finalName });
+        uniqueCenters.set(normalizedCode, { ...c, code: normalizedCode, displayName: finalName });
       }
     });
     return Array.from(uniqueCenters.values());
@@ -379,14 +421,36 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const isMonitor = useMemo(() => (role as string) === 'monitor', [role]);
   const isCanViewAll = useMemo(() => isAdmin || isMonitor, [isAdmin, isMonitor]);
 
+  const DAMMAM_MISDIRECTED_BARCODES = [
+    'G01YOM1177316', 'G01YOM1177416', 'G01YOM1177516', 'G01YOM1177616', 'G01YOM1177716',
+    'G02YOM1177816', 'G02YOM1177916', 'G02YOM1178016',
+    'G03YOM1178116',
+    'G05YOM1178216', 'G05YOM1178316', 'G05YOM1178416', 'G05YOM1178516', 'G05YOM1178616', 'G05YOM1178716', 'G05YOM1178816',
+    'G06YOM1178916', 'G06YOM1179016', 'G06YOM1179116', 'G06YOM1179216',
+    'G07YOM1179316', 'G07YOM1179416', 'G07YOM1179516'
+  ];
+
   const statsRecords = useMemo(() => {
     const baseRecords = records.filter(r => r.status !== 'cancelled');
     return (isCanViewAll) ? baseRecords : baseRecords.filter(r => {
       if (role === 'factory') return r.palletBarcode.includes(userCode);
-      if (role === 'center') return r.destination === userCenter;
+      if (role === 'center') {
+        const userCodeComp = userCenter.trim().toUpperCase();
+        // If received, it belongs to receivedByCenter. 
+        // If received incorrectly and we don't know where, it doesn't belong to the destination anymore.
+        let recordCodeComp = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : r.destination)).trim().toUpperCase();
+        
+        // Hard fix for the 23 pallets that Dammam center didn't receive
+        const barcode = (r.palletBarcode || '').trim().toUpperCase();
+        if ((recordCodeComp === 'DAMMAM' || recordCodeComp === 'DMM') && barcode && DAMMAM_MISDIRECTED_BARCODES.includes(barcode)) {
+          recordCodeComp = 'WRONG_DEST';
+        }
+        
+        return recordCodeComp === userCodeComp;
+      }
       return false;
     });
-  }, [records, role, userCode, userCenter, isCanViewAll]);
+  }, [records, role, userCode, userCenter, isCanViewAll, DAMMAM_MISDIRECTED_BARCODES]);
 
   const handleAiAnalysis = async () => {
     setIsAnalyzing(true);
@@ -941,12 +1005,63 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     }
   };
 
+  const handleApplyMisdirectedFix = async () => {
+    setIsApplyingFix(true);
+    const barcodes = misdirectedBarcodesStr.split('\n').map(s => s.trim().toUpperCase()).filter(Boolean);
+    if (barcodes.length === 0) {
+      onNotify('تنبيه', 'يرجى إدخال باركود واحد على الأقل');
+      setIsApplyingFix(false);
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+      let count = 0;
+      barcodes.forEach(bc => {
+        const record = records.find(r => r.palletBarcode === bc);
+        if (record) {
+          batch.update(doc(db, 'records', record.id), {
+            isWrongDestination: true,
+            receivedByCenter: 'MISDIRECTED_CORRECTED',
+            status: 'received', // Keep as received but at "WRONG_DEST" effectively
+            notes: (record.notes || '') + ' [تم تصحيح التوجيه وتعديل الرصيد يدوياً بناءً على طلب الإدارة]'
+          });
+          count++;
+        }
+      });
+
+      if (count > 0) {
+        await batch.commit();
+        onNotify('نجاح', `تمت معالجة ${count} طبلية وإزالتها من رصيد المركز الأصلي.`);
+        setShowFixMisdirectedModal(false);
+        setMisdirectedBarcodesStr('');
+      } else {
+        onNotify('تنبيه', 'لم يتم العثور على أي من الأكواد المدخلة في النظام.');
+      }
+    } catch (err) {
+      console.error(err);
+      onNotify('خطأ', 'فشل تطبيق التصحيح.');
+    } finally {
+      setIsApplyingFix(false);
+    }
+  };
+
   const handleExportCenterInventory = () => {
     const exportData: any[] = [];
     const isDateFiltered = exportStartDate || exportEndDate;
 
     centerOptions.forEach(center => {
-      const centerRecords = statsRecords.filter(r => r.destination === center.code);
+      const centerRecords = statsRecords.filter(r => {
+        const compareCode = center.code.trim().toUpperCase();
+        let recordCenterCode = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : r.destination)).trim().toUpperCase();
+        
+        // Hard fix for the 23 pallets that Dammam center didn't receive
+        if ((recordCenterCode === 'DAMMAM' || recordCenterCode === 'DMM') && DAMMAM_MISDIRECTED_BARCODES.includes(r.palletBarcode.trim().toUpperCase())) {
+          recordCenterCode = 'WRONG_DEST';
+        }
+
+        return recordCenterCode === compareCode;
+      });
       const receivedRecords = centerRecords.filter(r => r.status === 'received');
 
       if (isDateFiltered) {
@@ -1084,9 +1199,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             totalBundles += b;
           });
 
-          // الحساب الصحيح للرصيد المتبقي: المستلم - (المنفذ + المشحون)
-          const remaining = Math.max(0, totalCartons - typeExportedCartons);
-          const remainingPallets = type.cartonsPerPallet > 0 ? (remaining / type.cartonsPerPallet).toFixed(2) : '0';
+          // الحساب الصحيح للرصيد المتبقي الحر: المستلم - (المنفذ + المشحون + المخطط)
+          const remainingCartonsTotal = Math.max(0, totalCartons - typeExportedCartons - plannedQty);
+          const remainingBundlesTotal = Math.max(0, totalBundles - typeExportedBundles - (plannedQty * type.bundlesPerCarton));
+          
+          const remainingPallets = type.cartonsPerPallet > 0 ? (remainingCartonsTotal / type.cartonsPerPallet).toFixed(2) : '0';
 
           if (palletCount > 0 || plannedQty > 0 || typeExportedCartons > 0) {
             exportData.push({
@@ -1100,8 +1217,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               'تم تصديره (كرتون)': typeExportedCartons,
               'تم تصديره (حزمة)': typeExportedBundles, // الكمية التي تم شحنها أو تنفيذها فعلياً بالحزم
               'مخطط صرفه (كرتون)': plannedQty,
-              'الرصيد الحر المتبقي (كرتون)': remaining,
-              'الرصيد الحر المتبقي (حزمة)': remaining * type.bundlesPerCarton,
+              'الرصيد الحر المتبقي (كرتون)': remainingCartonsTotal,
+              'الرصيد الحر المتبقي (حزمة)': remainingBundlesTotal,
               'الطبليات المتبقية': remainingPallets
             });
           }
@@ -1187,6 +1304,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         const trip = trips.find(t => t.id === r.tripId);
         return {
           'باركود الطبلية': r.palletBarcode,
+          'باركود الطبلية (Barcode)': `*${r.palletBarcode}*`,
           'رقم الرحلة': trip?.tripNumber || '---',
           'المرحلة': pType?.stageName || '---',
           'الوجهة': getDisplayName(r.destination),
@@ -1199,6 +1317,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       });
 
       const ws = XLSX.utils.json_to_sheet(data);
+      applyBarcodeStyleToSheet(ws, 'باركود الطبلية (Barcode)');
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "جميع الطبليات");
       XLSX.writeFile(wb, `All_Pallets_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
@@ -1437,6 +1556,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       return {
         'رقم الرحلة': trip?.tripNumber || '---',
         'باركود الطبلية': r.palletBarcode,
+        'باركود الطبلية (Barcode)': `*${r.palletBarcode}*`,
         'المرحلة': pType?.stageName || '---',
         'الوجهة': users.find(u => u.code === r.destination)?.displayName || r.destination,
         'الحالة': r.status === 'received' ? 'تم الاستلام' : r.status === 'in_transit' ? 'في الطريق' : r.status === 'cancelled' ? 'ملغاة' : 'في المطبعة',
@@ -1447,6 +1567,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     });
 
     const ws = XLSX.utils.json_to_sheet(exportData);
+    applyBarcodeStyleToSheet(ws, 'باركود الطبلية (Barcode)');
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Trip Pallets");
     XLSX.writeFile(wb, `Trip_${trip?.tripNumber || 'Pallets'}_Details.xlsx`);
@@ -1470,6 +1591,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   const stats = useMemo(() => {
     const received = statsRecords.filter(r => r.status === 'received');
     
+    // Filter trips for the current center if restricted
+    const filteredTrips = isCanViewAll ? consolidatedTrips : consolidatedTrips.filter(t => 
+      t.originCenter.trim().toUpperCase() === userCenter.trim().toUpperCase()
+    );
+
     const stageSummary = palletTypes.map(type => {
       const typeReceived = received.filter(r => r.palletTypeId === type.id);
       const palletCount = typeReceived.length;
@@ -1535,8 +1661,21 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
     const totalIntDamagedCartons = received.reduce((acc, r) => acc + (r.internalDamageQty || 0), 0);
     const totalDamagedCartons = totalExtDamagedCartons + totalIntDamagedCartons;
 
-    // حساب المخزون المخطط صرفه (Planned Outbound) باستخدام الرحلات المدمجة بدون تكرار
-    const plannedOutbound = consolidatedTrips
+    // حساب المخزون المخطط صرفه (Planned Outbound)
+    const totalPlannedBooksCartons = filteredTrips
+      .filter(t => t.status === 'planned')
+      .reduce((acc, t) => {
+        const qTot = t.quantities.reduce((sum, q) => {
+           const type = palletTypes.find(pt => pt.id === q.palletTypeId);
+           if (type && !type.stageCode.toUpperCase().startsWith('F')) {
+             return sum + q.cartonCount;
+           }
+           return sum;
+        }, 0);
+        return acc + qTot;
+      }, 0);
+
+    const plannedOutbound = filteredTrips
       .filter(t => t.status === 'planned')
       .reduce((acc, t) => {
         t.quantities.forEach(q => {
@@ -1546,7 +1685,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         return acc;
       }, {} as Record<string, Record<string, number>>);
 
-    const shippedOutbound = consolidatedTrips
+    const shippedOutbound = filteredTrips
       .filter(t => t.status === 'dispatched' || t.status === 'executed')
       .reduce((acc, t) => {
         const qtList = t.executedQuantities || t.quantities;
@@ -1563,6 +1702,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         });
         return acc;
       }, { bookCartons: 0, bookBundles: 0, emptyCartons: 0 });
+
+    const totalFreeBooksCartons = totalBooksCartons - shippedOutbound.bookCartons - totalPlannedBooksCartons;
 
     return { 
       total: statsRecords.length, 
@@ -1581,11 +1722,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       totalIntDamagedCartons,
       palletsWithDamage: received.filter(r => r.condition && r.condition !== 'intact').length,
       plannedOutbound,
-      shippedOutbound
+      shippedOutbound,
+      totalPlannedBooksCartons,
+      totalFreeBooksCartons,
+      wrongDestinationsCount: received.filter(r => r.isWrongDestination || (r.notes && r.notes.includes('توجيه خاطئ'))).length
     };
-  }, [statsRecords, palletTypes, consolidatedTrips]);
+  }, [statsRecords, palletTypes, consolidatedTrips, isCanViewAll, userCenter]);
 
   const getDisplayName = (code: string) => {
+    if (code === 'MISDIRECTED_CORRECTED' || code === 'WRONG_DEST') return 'مركز توجيه خاطئ';
     const u = users.find(u => u.code === code);
     if (!u) return code;
     
@@ -1724,6 +1869,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               <button onClick={() => setShowDistForm(true)} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95">
                 ➕ إضافة رحلة يدوياً
               </button>
+              <button 
+                onClick={() => {
+                  setMisdirectedBarcodesStr('G01YOM1177316\nG01YOM1177416\nG01YOM1177516\nG01YOM1177616\nG01YOM1177716\nG02YOM1177816\nG02YOM1177916\nG02YOM1178016\nG03YOM1178116\nG05YOM1178216\nG05YOM1178316\nG05YOM1178416\nG05YOM1178516\nG05YOM1178616\nG05YOM1178716\nG05YOM1178816\nG06YOM1178916\nG06YOM1179016\nG06YOM1179116\nG06YOM1179216\nG07YOM1179316\nG07YOM1179416\nG07YOM1179516');
+                  setShowFixMisdirectedModal(true);
+                }} 
+                className="px-6 py-2.5 rounded-2xl bg-orange-500/20 backdrop-blur-md border border-orange-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-orange-500/30 transition-all active:scale-95"
+              >
+                🛠️ تصحيح الطبليات الموجهة خاطئاً
+              </button>
               <div className="flex gap-1">
                 {isAdmin && (
                   <>
@@ -1739,6 +1893,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     </button>
                     <button onClick={() => setShowReconciliationModal(true)} className="px-6 py-2.5 rounded-2xl bg-rose-500/20 backdrop-blur-md border border-rose-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-rose-500/30 transition-all active:scale-95 shadow-md">
                       ⚖️ أداة تسوية المخزون
+                    </button>
+                    <button onClick={() => setShowComparisonModal(true)} className="px-6 py-2.5 rounded-2xl bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-amber-500/30 transition-all active:scale-95 shadow-md">
+                      📊 مقارنة نتائج التسوية والأرصدة
                     </button>
                   </>
                 )}
@@ -1814,10 +1971,10 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 <select 
                   value={distTripData.originCenter}
                   onChange={e => setDistTripData({...distTripData, originCenter: e.target.value})}
-                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-3 text-xs font-bold focus:border-indigo-500 outline-none transition-all"
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-3 text-xs font-bold text-black focus:border-indigo-500 outline-none transition-all"
                 >
                   <option value="">اختر المركز</option>
-                  {centerOptions.map(c => <option key={c.code} value={c.code}>{c.displayName}</option>)}
+                  {centerOptions.map(c => <option key={c.id} value={c.code}>{c.displayName}</option>)}
                 </select>
               </div>
 
@@ -1932,6 +2089,47 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
         </div>
       )}
 
+      {showFixMisdirectedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col relative my-auto">
+            <div className="p-6 bg-orange-600 text-white flex justify-between items-center shrink-0">
+              <h3 className="font-black text-lg">أداة تصحيح الطبليات الموجهة خاطئاً</h3>
+              <button onClick={() => setShowFixMisdirectedModal(false)} className="text-white/60 hover:text-white p-2">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-orange-50 p-4 rounded-2xl border border-orange-100 mb-2">
+                <p className="text-[10px] font-bold text-orange-800 leading-relaxed">
+                  هذه الأداة تقوم بنقل الطبليات المختارة من رصيد المركز (الوجهة) إلى قسم "توجيه خاطئ" لإتاحة تصحيح الرصيد الحر.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 mr-2 uppercase">أرقام الطبليات (باركود بكل سطر)</label>
+                <textarea 
+                  value={misdirectedBarcodesStr}
+                  onChange={e => setMisdirectedBarcodesStr(e.target.value)}
+                  className="w-full h-64 bg-slate-50 border-2 border-slate-100 rounded-3xl p-4 text-xs font-mono font-bold focus:border-orange-500 outline-none transition-all resize-none"
+                  placeholder="G01YOM..."
+                />
+              </div>
+              <p className="text-[9px] font-black text-slate-400 text-center">أدخل أرقام الطبليات التي تم حصرها كـ "توجيه خاطئ" لحذفها من رصيد المركز الأصلي.</p>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
+              <button 
+                onClick={() => setShowFixMisdirectedModal(false)}
+                className="flex-1 bg-white border-2 border-slate-200 text-slate-600 p-4 rounded-2xl font-black text-sm active:scale-95 transition-all"
+              >إلغاء</button>
+              <button 
+                onClick={handleApplyMisdirectedFix}
+                disabled={isApplyingFix}
+                className="flex-2 bg-orange-600 text-white p-4 rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-all disabled:opacity-50"
+              >
+                {isApplyingFix ? 'جاري المعالجة...' : 'تطبيق التصحيح الفوري'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showExecutionManualForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn overflow-y-auto">
           <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[calc(100vh-2rem)] relative my-auto">
@@ -1967,7 +2165,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     }
                     setExecutionData({...executionData, tripId, quantities: newQuants});
                   }}
-                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-3 text-xs font-bold focus:border-indigo-500 outline-none transition-all"
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl p-3 text-xs font-bold text-black focus:border-indigo-500 outline-none transition-all"
                 >
                   <option value="">اختر الرحلة...</option>
                   {distributionTrips
@@ -2093,8 +2291,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   <span className="text-[10px] font-black text-slate-500 group-hover:text-indigo-600 transition-colors">عرض الرحلات الملغاة</span>
                 </label>
               </div>
-              <select 
-                className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 text-xs font-bold focus:border-indigo-500 outline-none transition-all"
+                <select 
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-4 py-3 text-xs font-black text-black focus:border-indigo-500 outline-none transition-all"
                 value={selectedTripForControl}
                 onChange={(e) => setSelectedTripForControl(e.target.value)}
               >
@@ -2163,11 +2361,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
       {showStatsReport && (
         <section className="space-y-4 animate-slideDown">
           <div className="bg-white p-8 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-6">
-            <div className="flex justify-between items-center border-b pb-4">
-               <h2 className="text-lg font-black text-indigo-900">📊 تقرير التلفيات والمخزون</h2>
+             <div className="flex justify-between items-center border-b pb-4">
+               <h2 className="text-lg font-black text-indigo-900">📊 تقرير التلفيات والمخزون {isCanViewAll ? '(نطاق شامل)' : `(${getDisplayName(userCenter)})`}</h2>
                {dbStatus === 'offline' && <span className="text-[10px] bg-rose-100 text-rose-600 px-3 py-1 rounded-full font-black animate-pulse">⚠️ وضع غير متصل - جاري المحاولة...</span>}
                {dbStatus === 'online' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full font-black">🟢 متصل بقاعدة البيانات</span>}
-            </div>
+             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-emerald-50 p-5 rounded-3xl text-right border border-emerald-100 flex justify-between items-center">
                 <div>
@@ -2200,11 +2398,11 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               </div>
               <div className="bg-indigo-50 p-5 rounded-3xl text-right border border-indigo-100">
                 <span className="text-[9px] font-black text-indigo-400 block mb-1 uppercase">الرصيد المتبقي المتاح (حر)</span>
-                <span className="text-2xl font-black text-indigo-900">{(stats.totalBooksCartons - stats.shippedOutbound.bookCartons).toLocaleString()} كرتون</span>
+                <span className="text-2xl font-black text-indigo-900">{stats.totalFreeBooksCartons.toLocaleString()} كرتون</span>
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 pt-4 border-t border-slate-50">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-4 border-t border-slate-50">
                <div className="bg-rose-50 p-4 rounded-3xl text-center border border-rose-100 flex flex-col items-center">
                   <span className="text-xl block mb-1">⚠️</span>
                   <span className="text-xl font-black text-rose-700 leading-none">{stats.totalDamagedCartons}</span>
@@ -2220,9 +2418,14 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   <span className="text-xl font-black text-orange-700 leading-none">{stats.totalIntDamagedCartons}</span>
                   <span className="text-[7px] font-black text-orange-400 block uppercase mt-1">تلف كراتين داخلي</span>
                </div>
+               <div className="bg-orange-100/50 p-4 rounded-3xl text-center border border-orange-200 flex flex-col items-center">
+                  <span className="text-xl block mb-1">🚩</span>
+                  <span className="text-xl font-black text-orange-800 leading-none">{stats.wrongDestinationsCount}</span>
+                  <span className="text-[7px] font-black text-orange-600 block uppercase mt-1">طبليات بتوجيه خاطئ</span>
+               </div>
             </div>
 
-            {(stats.totalDiffCartons !== 0 || stats.totalDiffBundles !== 0) && (
+            {(isAdmin || isMonitor) && (stats.totalDiffCartons !== 0 || stats.totalDiffBundles !== 0) && (
               <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-50">
                  <div className="bg-indigo-50 p-4 rounded-3xl text-center border border-indigo-100 flex flex-col items-center">
                     <span className="text-xl block mb-1">⚖️</span>
@@ -2285,7 +2488,17 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 return center.code === userCenter;
               })
               .map(center => {
-              const centerRecords = statsRecords.filter(r => r.destination === center.code);
+              const centerRecords = statsRecords.filter(r => {
+                const compareCode = center.code.trim().toUpperCase();
+                let recordCenterCode = (r.receivedByCenter || (r.status === 'received' && r.isWrongDestination ? 'WRONG_DEST' : r.destination)).trim().toUpperCase();
+                
+                // Hard fix for the 23 pallets that Dammam center didn't receive
+                if ((recordCenterCode === 'DAMMAM' || recordCenterCode === 'DMM') && DAMMAM_MISDIRECTED_BARCODES.includes(r.palletBarcode.trim().toUpperCase())) {
+                  recordCenterCode = 'WRONG_DEST';
+                }
+
+                return recordCenterCode === compareCode;
+              });
               const receivedRecords = centerRecords.filter(r => r.status === 'received');
               
               const centerExecutedTripsForCalc = consolidatedTrips.filter(t => 
@@ -2347,6 +2560,13 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                 });
               });
               
+              const centerPlannedTrips = consolidatedTrips
+                .filter(t => 
+                  t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
+                  t.status === 'planned'
+                )
+                .sort((a, b) => a.date.localeCompare(b.date)); // الأقدم أولاً للمخطط
+
               // حساب دقيق للرصيد المتبقي الحر الإجمالي من خلال جمع الأرصدة المتبقية لكل مرحلة
               let totalRemainingCartonsSum = 0;
               let totalRemainingBundlesSum = 0;
@@ -2373,7 +2593,15 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   }
                 });
 
-                const stageRemainingB = Math.max(0, stageReceivedB - stageShippedB);
+                let stagePlannedB = 0;
+                centerPlannedTrips.forEach(pt => {
+                  const q = pt.quantities.find(qty => qty.palletTypeId === type.id);
+                  if (q) {
+                    stagePlannedB += q.bundleCount || 0;
+                  }
+                });
+
+                const stageRemainingB = Math.max(0, stageReceivedB - stageShippedB - stagePlannedB);
                 totalRemainingCartonsSum += Math.floor(stageRemainingB / type.bundlesPerCarton);
                 totalRemainingBundlesSum += (stageRemainingB % type.bundlesPerCarton);
                 totalRemainingBundlesRaw += stageRemainingB;
@@ -2382,13 +2610,6 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               const remainingBookBalance = totalRemainingCartonsSum;
               const remainingExtraBundles = totalRemainingBundlesSum;
               const remainingEmptyBalance = Math.max(0, centerEmptyCartons - exportedEmptyCartons);
-
-              const centerPlannedTrips = consolidatedTrips
-                .filter(t => 
-                  t.originCenter?.trim().toUpperCase() === center.code?.trim().toUpperCase() && 
-                  t.status === 'planned'
-                )
-                .sort((a, b) => a.date.localeCompare(b.date)); // الأقدم أولاً للمخطط
 
               return (
                 <div key={center.id} className="bg-white p-5 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4 relative overflow-hidden group hover:border-emerald-200 transition-all">
@@ -2498,7 +2719,15 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                             }
                           });
 
-                          const remainingBundlesTotal = Math.max(0, stageReceivedBundles - stageShippedBundles);
+                          let stagePlannedBundles = 0;
+                          centerPlannedTrips.forEach(pt => {
+                            const q = pt.quantities.find(qty => qty.palletTypeId === type.id);
+                            if (q) {
+                              stagePlannedBundles += q.bundleCount || 0;
+                            }
+                          });
+
+                          const remainingBundlesTotal = Math.max(0, stageReceivedBundles - stageShippedBundles - stagePlannedBundles);
                           
                           // ندرج كافة المراحل لسهولة التتبع
                           details.push({
@@ -2880,8 +3109,8 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1 text-right">
               <label className="text-[10px] font-black text-slate-400 mr-2">الوجهة</label>
-              <select value={cCode} onChange={e => setCCode(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none ring-1 ring-slate-100">
-                {centerOptions.map(center => <option key={center.id} value={center.code}>{center.displayName}</option>)}
+              <select value={cCode} onChange={e => setCCode(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-black text-black outline-none ring-1 ring-slate-100">
+                {centerOptions.map(center => <option key={center.id} value={center.code} className="text-black">{center.displayName}</option>)}
               </select>
             </div>
             <div className="space-y-1 text-right">
@@ -2893,7 +3122,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1 text-right">
               <label className="text-[10px] font-black text-slate-400 mr-2">الفصل الدراسي</label>
-              <select value={semester} onChange={e => setSemester(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none ring-1 ring-slate-100">
+              <select value={semester} onChange={e => setSemester(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-black text-black outline-none ring-1 ring-slate-100">
                 <option value="1">الفصل الأول</option>
                 <option value="2">الفصل الثاني</option>
                 <option value="3">الفصل الثالث</option>
@@ -2901,7 +3130,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
             </div>
             <div className="space-y-1 text-right">
               <label className="text-[10px] font-black text-slate-400 mr-2">العام الدراسي</label>
-              <select value={year} onChange={e => setYear(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-bold outline-none ring-1 ring-slate-100">
+              <select value={year} onChange={e => setYear(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl text-xs font-black text-black outline-none ring-1 ring-slate-100">
                 <option value="2026">2026 م</option>
                 <option value="2027">2027 م</option>
                 <option value="2028">2028 م</option>
@@ -3428,6 +3657,16 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
           trips={consolidatedTrips}
           records={statsRecords}
           centerOps={centerOptions}
+        />
+      )}
+
+      {showComparisonModal && (
+        <ReconciliationComparison
+          palletTypes={palletTypes}
+          records={records}
+          distributionTrips={distributionTrips}
+          users={users}
+          onClose={() => setShowComparisonModal(false)}
         />
       )}
 
