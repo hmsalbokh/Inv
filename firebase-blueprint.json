@@ -68,6 +68,15 @@
         "details": { "type": "string" },
         "timestamp": { "type": "number" }
       }
+    },
+    "SystemConfig": {
+      "title": "System Config",
+      "description": "Global settings and feature toggles",
+      "type": "object",
+      "properties": {
+        "lastResetTimestamp": { "type": "number" },
+        "allowCentersExport": { "type": "boolean" }
+      }
     }
   },
   "firestore": {
@@ -77,6 +86,6 @@
     "/records/{recordId}": { "schema": "Record", "description": "Scan records" },
     "/distributionTrips/{tripId}": { "schema": "Trip", "description": "Local distribution logs" },
     "/system_logs/{logId}": { "schema": "SystemLog", "description": "Audit trail" },
-    "/config/{docId}": { "schema": "object", "description": "System config" }
+    "/config/{docId}": { "schema": "SystemConfig", "description": "System config" }
   }
 }

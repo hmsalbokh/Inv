@@ -16,9 +16,24 @@ interface Props {
   onResetStages: () => Promise<void>;
   onMigrateData: () => Promise<void>;
   onNotify: (title: string, msg: string) => void;
+  allowCentersExport: boolean;
+  onToggleCentersExport: (value: boolean) => Promise<void>;
 }
 
-export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, onUpdate, onAdd, onDelete, onResetData, onResetStages, onMigrateData, onNotify }) => {
+export const Settings: React.FC<Props> = ({ 
+  palletTypes, 
+  users, 
+  onUpdateUsers, 
+  onUpdate, 
+  onAdd, 
+  onDelete, 
+  onResetData, 
+  onResetStages, 
+  onMigrateData, 
+  onNotify,
+  allowCentersExport,
+  onToggleCentersExport
+}) => {
   const [tab, setTab] = useState<'stages' | 'users' | 'logs'>('users');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showResetStagesConfirm, setShowResetStagesConfirm] = useState(false);
@@ -115,7 +130,35 @@ export const Settings: React.FC<Props> = ({ palletTypes, users, onUpdateUsers, o
         <button onClick={() => setTab('logs')} className={`flex-1 py-3 rounded-2xl text-[11px] font-black transition-all ${tab === 'logs' ? 'bg-indigo-900 text-white shadow-lg' : 'text-slate-500 hover:bg-white/50'}`}>🚨 سجل الأخطاء</button>
       </div>
 
-      <div className="px-4 space-y-2">
+      <div className="px-4 space-y-4">
+        {/* بطاقة التحكم بصلاحيات النظام */}
+        <div className="bg-white border border-slate-150 p-6 rounded-[2rem] shadow-sm space-y-4 text-right">
+          <div className="flex items-center gap-2 justify-between">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">🔐</span>
+              <h3 className="font-black text-slate-800 text-xs">صلاحيات وأمن النظام</h3>
+            </div>
+            <span className="bg-indigo-50 text-indigo-700 text-[9px] font-bold px-2.5 py-1 rounded-full border border-indigo-100">تحكم فوري</span>
+          </div>
+          
+          <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-100/70">
+            <div className="text-right flex-1 pl-4">
+              <span className="text-xs font-black text-slate-800 block">منح صلاحية جرد الصادر لمراكز الاستلام</span>
+              <span className="text-[9px] text-slate-500 block mt-1 font-bold">عند تفعيلها، سيتمكن موظفو المراكز من جرد الكراتين عبر حساباتهم.</span>
+            </div>
+            
+            {/* Toggle Switch */}
+            <button 
+              onClick={() => onToggleCentersExport(!allowCentersExport)}
+              className={`w-12 h-6.5 rounded-full p-0.5 transition-colors duration-200 outline-none ${allowCentersExport ? 'bg-indigo-600' : 'bg-slate-300'} relative cursor-pointer shrink-0`}
+            >
+              <div 
+                className={`bg-white w-5.5 h-5.5 rounded-full shadow transition-transform duration-200 absolute top-0.5 left-0.5 ${allowCentersExport ? 'translate-x-[22px]' : 'translate-x-0'}`} 
+              />
+            </button>
+          </div>
+        </div>
+
         <button onClick={() => setShowResetConfirm(true)} className="w-full bg-rose-50 text-rose-600 p-4 rounded-2xl border border-rose-100 font-black text-xs active:scale-95 transition-all mb-4">🗑️ تصفير كافة البيانات السحابية</button>
       </div>
 

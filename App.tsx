@@ -7,6 +7,7 @@ import { Settings } from './components/Settings';
 import { History } from './components/History';
 import { Lab } from './components/Lab';
 import { Login } from './components/Login';
+import { ExportAudit } from './components/ExportAudit';
 import { ConfirmModal } from './components/ConfirmModal';
 import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -90,7 +91,7 @@ export const App: React.FC = () => {
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [users, setUsers] = useState<UserCredentials[]>(DEFAULT_USERS);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'scan' | 'history' | 'settings' | 'lab'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'scan' | 'history' | 'settings' | 'lab' | 'export'>('dashboard');
   const [palletTypes, setPalletTypes] = useState<PalletType[]>(DEFAULT_TYPES);
   const [records, setRecords] = useState<InventoryRecord[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -104,6 +105,9 @@ export const App: React.FC = () => {
   
   // طابع التصفير لفلترة البيانات الشبحية
   const [lastResetTimestamp, setLastResetTimestamp] = useState<number>(Number(localStorage.getItem(STORAGE_KEY_LAST_RESET)) || 0);
+
+  // صلاحية جرد الصادر للمراكز
+  const [allowCentersExport, setAllowCentersExport] = useState<boolean>(false);
 
   // 0. مستمع حالة المصادقة في Firebase
   useEffect(() => {
@@ -142,7 +146,7 @@ export const App: React.FC = () => {
     localStorage.removeItem(STORAGE_KEY_TRIPS);
   }, []);
 
-  // 1. مستمع الإعدادات (طابع التصفير) - يعمل مرة واحدة عند البداية
+  // 1. مستمع الإعدادات (طابع التصفير والصلاحيات) - يعمل مرة واحدة عند البداية
   useEffect(() => {
     const unsubConfig = onSnapshot(doc(db, 'config', 'system'), (snapshot) => {
       if (snapshot.exists()) {
@@ -150,10 +154,21 @@ export const App: React.FC = () => {
         if (config.lastResetTimestamp) {
           setLastResetTimestamp(config.lastResetTimestamp);
         }
+        setAllowCentersExport(!!config.allowCentersExport);
       }
     });
     return () => unsubConfig();
   }, []);
+
+  // إعادة التوجيه للرئيسية إذا فُقدت صلاحية جرد الصادر
+  useEffect(() => {
+    if (activeTab === 'export' && currentUser) {
+      const hasAccess = currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport);
+      if (!hasAccess) {
+        setActiveTab('dashboard');
+      }
+    }
+  }, [allowCentersExport, activeTab, currentUser]);
 
   // 2. مستمعو البيانات - يعتمدون على طابع التصفير لفلترة البيانات الشبحية
   useEffect(() => {
@@ -302,6 +317,23 @@ export const App: React.FC = () => {
       setIsSystemResetting(false);
       setSyncing(false);
       setActiveTab('dashboard');
+    }
+  };
+
+  const handleToggleCentersExport = async (val: boolean) => {
+    try {
+      setSyncing(true);
+      await setDoc(doc(db, 'config', 'system'), { allowCentersExport: val }, { merge: true });
+      setShowNotification({
+        title: '🔐 تحديث صلاحيات النظام',
+        msg: val 
+          ? 'تم تفعيل صلاحية جرد الصادر لمراكز الاستلام بنجاح وبشكل فوري.' 
+          : 'تم تعطيل صلاحية جرد الصادر للمراكز، وأصبح يقتصر على مسئول النظام حالياً.'
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'config/system');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -711,6 +743,13 @@ export const App: React.FC = () => {
             onNotify={(title, msg) => setShowNotification({ title, msg })}
           />
         )}
+        {activeTab === 'export' && (currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport)) && (
+          <ExportAudit 
+            palletTypes={palletTypes}
+            currentUser={currentUser}
+            onNotify={(title, msg) => setShowNotification({ title, msg })}
+          />
+        )}
         {activeTab === 'settings' && currentUser.code === 'ADMIN' && (
           <Settings 
             palletTypes={palletTypes} 
@@ -757,6 +796,8 @@ export const App: React.FC = () => {
             onResetStages={handleResetStagesToDefault}
             onMigrateData={handleMigrateFromOldDb}
             onNotify={(title, msg) => setShowNotification({ title, msg })}
+            allowCentersExport={allowCentersExport}
+            onToggleCentersExport={handleToggleCentersExport}
           />
         )}
       </main>
@@ -766,6 +807,7 @@ export const App: React.FC = () => {
           <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} label="📊 الرئيسية" />
           {currentUser.role !== 'monitor' && <NavItem active={activeTab === 'scan'} onClick={() => setActiveTab('scan')} label="📷 مسح" /> }
           <NavItem active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="📋 السجل" />
+          {(currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport)) && <NavItem active={activeTab === 'export'} onClick={() => setActiveTab('export')} label="📤 جرد الصادر" />}
           {currentUser.code === 'ADMIN' && <NavItem active={activeTab === 'lab'} onClick={() => setActiveTab('lab')} label="🧪 المختبر" />}
           {currentUser.code === 'ADMIN' && <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="⚙️ الإعدادات" /> }
         </div>
