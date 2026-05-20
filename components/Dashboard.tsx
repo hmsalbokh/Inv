@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { getStageColor } from '../stageColors';
 import { ConfirmModal } from './ConfirmModal';
 import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, UserCredentials, DistributionTrip } from '../types';
 import { analyzeInventory } from '../services/geminiService';
@@ -148,15 +149,20 @@ const StageCard: React.FC<{ type: PalletType, statsRecords: InventoryRecord[] }>
     totalBundles += b;
   });
 
+  const stageColorObj = getStageColor(type.stageCode);
+
   return (
-    <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4 relative overflow-hidden group hover:border-indigo-200 transition-all">
-      <div className={`absolute top-0 left-0 w-2 h-full opacity-20 group-hover:opacity-100 transition-opacity ${type.id.startsWith('ig') ? 'bg-emerald-500' : 'bg-indigo-500'}`}></div>
+    <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-slate-100 space-y-4 relative overflow-hidden group hover:border-slate-350 transition-all">
+      <div className="absolute top-0 left-0 w-2.5 h-full opacity-35 group-hover:opacity-100 transition-opacity" style={{ backgroundColor: stageColorObj.hex }}></div>
       <div className="flex justify-between items-start">
         <div className="space-y-1">
-          <h4 className="text-sm font-black text-slate-800">{type.stageName}</h4>
+          <h4 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: stageColorObj.hex }} />
+            {type.stageName}
+          </h4>
           <p className="text-[10px] font-bold text-slate-400">كود: {type.stageCode}</p>
         </div>
-        <div className={`${type.id.startsWith('ig') ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'} px-3 py-1 rounded-full text-[10px] font-black`}>
+        <div className="px-3 py-1 rounded-full text-[10px] font-black" style={{ backgroundColor: `${stageColorObj.hex}15`, color: stageColorObj.hex }}>
           {typeRecords.length} طبلية
         </div>
       </div>
