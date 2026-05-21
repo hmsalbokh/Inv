@@ -3149,7 +3149,34 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
           <div className="space-y-3">
             <label className="text-[10px] font-black text-slate-400 mr-2">تحديد المراحل والكميات</label>
             <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-100 custom-scrollbar">
-              {palletTypes.map(type => (
+              {[...palletTypes].sort((a, b) => {
+                const cleanA = a.stageCode.toUpperCase();
+                const cleanB = b.stageCode.toUpperCase();
+                
+                // Group ranking: G (general education) -> IG (international) -> others
+                const getGroupRank = (code: string) => {
+                  if (code.startsWith('G') && !code.startsWith('IG')) return 1;
+                  if (code.startsWith('IG')) return 2;
+                  return 3;
+                };
+
+                const groupA = getGroupRank(cleanA);
+                const groupB = getGroupRank(cleanB);
+
+                if (groupA !== groupB) {
+                  return groupA - groupB;
+                }
+
+                // Extract numeric suffix in the code
+                const numA = parseInt(cleanA.replace(/^\D+/g, '')) || 0;
+                const numB = parseInt(cleanB.replace(/^\D+/g, '')) || 0;
+
+                if (numA !== numB) {
+                  return numA - numB;
+                }
+
+                return cleanA.localeCompare(cleanB);
+              }).map(type => (
                 <div key={type.id} className="flex flex-col gap-2 p-3 bg-white rounded-xl shadow-sm border border-slate-100">
                   <div className="flex justify-between items-center pb-2 border-b border-slate-50">
                     <div className="flex flex-col">

@@ -180,7 +180,38 @@ export const App: React.FC = () => {
         const data = doc.data() as PalletType;
         return { ...data, id: data.id || doc.id };
       });
-      setPalletTypes(types);
+      
+      // ترتيب المراحل ترتيباً أكاديمياً صحيحاً قبل حفظها
+      const sortedTypes = [...types].sort((a, b) => {
+        const cleanA = (a.stageCode || '').toUpperCase();
+        const cleanB = (b.stageCode || '').toUpperCase();
+        
+        // تصنيف المجموعات: التعليم العام (G) -> المدارس العالمية (IG) -> أخرى
+        const getGroupRank = (code: string) => {
+          if (code.startsWith('G') && !code.startsWith('IG')) return 1;
+          if (code.startsWith('IG')) return 2;
+          return 3;
+        };
+
+        const groupA = getGroupRank(cleanA);
+        const groupB = getGroupRank(cleanB);
+
+        if (groupA !== groupB) {
+          return groupA - groupB;
+        }
+
+        // استخراج الرقم من الكود (مثلا G01 تعطي 1 ، G11 تعطي 11)
+        const numA = parseInt(cleanA.replace(/^\D+/g, '')) || 0;
+        const numB = parseInt(cleanB.replace(/^\D+/g, '')) || 0;
+
+        if (numA !== numB) {
+          return numA - numB;
+        }
+
+        return cleanA.localeCompare(cleanB);
+      });
+      
+      setPalletTypes(sortedTypes);
     });
 
     // مستمع الرحلات - فلترة من جهة الخادم لتوفير القراءات
