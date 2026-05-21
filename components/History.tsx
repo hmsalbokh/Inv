@@ -25,6 +25,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [palletTypeFilter, setPalletTypeFilter] = useState<string | 'ALL'>('ALL');
+  const [pressFilter, setPressFilter] = useState<PressCode | 'ALL'>('ALL');
   const [showDamagedOnly, setShowDamagedOnly] = useState(false);
   const [showWrongDestinationsOnly, setShowWrongDestinationsOnly] = useState(false);
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
@@ -208,6 +209,21 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
     return Array.from(unique.values());
   }, [users]);
 
+  const pressOptions = useMemo(() => {
+    const factories = users.filter(u => u.role === 'factory');
+    const unique = new Map<string, UserCredentials & { displayName: string }>();
+    factories.forEach(f => {
+      const normalizedCode = (f.code || '').trim().toUpperCase();
+      if (normalizedCode && !unique.has(normalizedCode)) {
+        let finalName = f.displayName || f.username;
+        if (normalizedCode === 'OPK') finalName = 'مطبعة العبيكان';
+        if (normalizedCode === 'UNI') finalName = 'المطبعة المتحدة';
+        unique.set(normalizedCode, { ...f, code: normalizedCode as PressCode, displayName: finalName });
+      }
+    });
+    return Array.from(unique.values());
+  }, [users]);
+
   const getConditionLabel = (record: InventoryRecord) => {
     if (record.hasDiscrepancy) {
       return { text: record.discrepancyType === 'shortage' ? 'نقص' : 'زيادة', color: 'bg-amber-100 text-amber-700' };
@@ -284,6 +300,12 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       if (isVisible && palletTypeFilter !== 'ALL') {
         isVisible = record.palletTypeId === palletTypeFilter;
       }
+
+      // Filter by Press / Factory
+      if (isVisible && pressFilter !== 'ALL') {
+        const recordPressCode = trip ? (trip.pressCode || '').trim().toUpperCase() : (record.palletBarcode.includes('OPK') ? 'OPK' : 'UNI');
+        isVisible = recordPressCode === pressFilter.trim().toUpperCase();
+      }
       
       return isVisible;
     }).sort((a, b) => {
@@ -292,7 +314,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       if (timeB !== timeA) return timeB - timeA;
       return b.id.localeCompare(a.id); // التحقق من المعرف للثبات في حال تطابق الوقت
     });
-  }, [records, role, userCode, userCenter, destinationFilter, statusFilter, showDamagedOnly, searchQuery, dateFilter, palletTypeFilter, trips]);
+  }, [records, role, userCode, userCenter, destinationFilter, statusFilter, showDamagedOnly, searchQuery, dateFilter, palletTypeFilter, pressFilter, trips]);
 
   const generateLabelHTML = (record: InventoryRecord, size: LabelSize) => {
     const pType = palletTypes.find(t => t.id === record.palletTypeId);
@@ -562,6 +584,23 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                  ))}
                </select>
             </div>
+
+            {/* Press Filter */}
+            {role !== 'factory' && (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex-1 min-w-fit overflow-hidden">
+                 <span className="text-[9px] font-black text-slate-400 whitespace-nowrap">المطبعة:</span>
+                 <select 
+                   value={pressFilter}
+                   onChange={(e) => setPressFilter(e.target.value as PressCode | 'ALL')}
+                   className="bg-transparent text-[10px] font-black text-slate-700 focus:outline-none w-full"
+                 >
+                   <option value="ALL">الكل</option>
+                   {pressOptions.map(press => (
+                     <option key={press.id} value={press.code}>{press.displayName}</option>
+                   ))}
+                 </select>
+              </div>
+            )}
           </div>
 
           {role !== 'center' && (
@@ -593,6 +632,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                 setSearchQuery('');
                 setDateFilter('');
                 setPalletTypeFilter('ALL');
+                setPressFilter('ALL');
                 setStatusFilter('ALL');
                 setDestinationFilter('ALL');
                 setShowDamagedOnly(false);
@@ -613,7 +653,46 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
              <p className="text-slate-400 font-bold text-xs">لا توجد سجلات متاحة حالياً</p>
           </div>
         ) : (
-          filteredRecords.map(record => {
+          <>
+            {isAdmin && filteredRecords.some(r => r.status !== 'cancelled') && (
+              <div className="bg-white p-4 rounded-3xl border border-slate-100/80 flex flex-wrap justify-between items-center gap-3 shadow-sm animate-fadeIn">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs">☑️</span>
+                  <span className="text-[11px] font-black text-slate-700">التحديد الجماعي للنتائج المفلترة:</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      const eligibleIds = filteredRecords.filter(r => r.status !== 'cancelled').map(r => r.id);
+                      setSelectedIds(prev => {
+                        const next = new Set(prev);
+                        eligibleIds.forEach(id => next.add(id));
+                        return next;
+                      });
+                    }}
+                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-150 px-3 py-2 rounded-xl text-[10px] font-black active:scale-95 transition-all cursor-pointer"
+                  >
+                    تحديد الكل ({filteredRecords.filter(r => r.status !== 'cancelled').length})
+                  </button>
+                  {selectedIds.size > 0 && (
+                    <button
+                      onClick={() => {
+                        const eligibleIds = filteredRecords.filter(r => r.status !== 'cancelled').map(r => r.id);
+                        setSelectedIds(prev => {
+                          const next = new Set(prev);
+                          eligibleIds.forEach(id => next.delete(id));
+                          return next;
+                        });
+                      }}
+                      className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-150 px-3 py-2 rounded-xl text-[10px] font-black active:scale-95 transition-all cursor-pointer"
+                    >
+                      إلغاء تحديد المفلتر ({filteredRecords.filter(r => r.status !== 'cancelled' && selectedIds.has(r.id)).length})
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {filteredRecords.map(record => {
             const isExpanded = expandedId === record.id;
             const cond = getConditionLabel(record);
             const pType = palletTypes.find(t => t.id === record.palletTypeId);
@@ -945,7 +1024,8 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                 )}
               </div>
             );
-          })
+          })}
+          </>
         )}
       </div>
     </div>

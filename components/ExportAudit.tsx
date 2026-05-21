@@ -78,6 +78,7 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
   
   // الباركود الممسوح في الحقل الفوري
   const [scanInput, setScanInput] = useState<string>('');
+  const [scanStatus, setScanStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [scannerFocus, setScannerFocus] = useState<boolean>(true);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   
@@ -296,14 +297,18 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
     const code = barcodeRaw.trim().toUpperCase();
     if (!code) return;
 
+    // تهيئة حالة المسح الحالية للبدء من جديد
+    setScanStatus(null);
+
     const matchIndex = loadedCartons.findIndex(c => c.boxbarcode.toUpperCase() === code);
 
     if (matchIndex !== -1) {
       const target = loadedCartons[matchIndex];
       if (target.scanned) {
-        if (onNotify) {
-          onNotify('⚠️ مكرر', `الكرتون رمز ${code} مجرود مسبقاً.`);
-        }
+        setScanStatus({
+          type: 'error',
+          message: `⚠️ كرتون مكرر: الرمز ${code} تم جرده ومطابقته مسبقاً.`
+        });
         setScanInput('');
         return;
       }
@@ -317,10 +322,7 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
 
       setLoadedCartons(updated);
       setLastScannedCarton(updated[matchIndex]);
-      
-      if (onNotify) {
-        onNotify('✓ كرتون مطابق', `تم جرد الكرتون رقم ${target.number} لمقرر ${target.stageArabicName} ومطابقته.`);
-      }
+      // نكتفي بتحديث الواجهة واللون والمرحلة والعداد كما طلب المستخدم دون إظهار أي رسالة منبثقة تتطلب الموافقة
     } else {
       let foundInOtherPallet = '';
       
@@ -339,14 +341,14 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
       };
 
       setScannedAnomalies(prev => [newAnomaly, ...prev]);
-      if (onNotify) {
-        onNotify(
-          '🚨 كرتون شارد / معيب', 
-          foundInOtherPallet 
-            ? `تحذير: هذا الكرتون يخص المعمل بالطبلية (${foundInOtherPallet}) وليس الحالية!`
-            : `تحذير: رمز الكرتون (${code}) غير معتمد بأي طبلية في كشف Google Sheets!`
-        );
-      }
+
+      // إظهار رسالة خطأ سريعة باللون الأحمر داخل الواجهة دون حظر الشاشة بمربع رسالة
+      setScanStatus({
+        type: 'error',
+        message: foundInOtherPallet 
+          ? `🚨 كرتون شارد: هذا الكرتون يخص الطبلية (${foundInOtherPallet}) وليس الحالية!`
+          : `🚨 كرتون عشوائي: الرمز (${code}) غير معتمد بأي طبلية في كشف Google Sheets!`
+      });
     }
     setScanInput('');
   };
@@ -812,7 +814,10 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
                       className="bg-transparent border-none outline-none font-mono text-sm font-black text-indigo-950 text-right w-44 focus:ring-0 placeholder:text-slate-400"
                       placeholder="جاهز للمسح التالي..."
                       value={scanInput}
-                      onChange={(e) => setScanInput(e.target.value)}
+                      onChange={(e) => {
+                        setScanInput(e.target.value);
+                        if (scanStatus) setScanStatus(null);
+                      }}
                       onFocus={() => setScannerFocus(true)}
                       onBlur={() => setScannerFocus(false)}
                       onKeyDown={(e) => {
@@ -824,6 +829,21 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
 
                   <span className="text-[11px] font-black text-indigo-500 uppercase tracking-widest select-none">SCANNER</span>
                 </div>
+
+                {/* عرض رسائل الخطأ السريعة باللون الأحمر داخل صفحة القراءة بدون حظر الشاشة بمربعات منبثقة */}
+                {scanStatus && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className={`mt-3 p-3.5 rounded-2xl text-[11px] font-black text-center shadow-lg transition-all ${
+                      scanStatus.type === 'error'
+                        ? 'bg-rose-50 text-rose-600 border-2 border-rose-200'
+                        : 'bg-emerald-50 text-emerald-700 border-2 border-emerald-200'
+                    }`}
+                  >
+                    {scanStatus.message}
+                  </motion.div>
+                )}
                 
                 <p className="text-center text-[9px] text-slate-400 mt-2 font-bold select-none">
                   {scannerFocus ? "⚠️ مسدس الليزر متصل وجاهز للمسح المستمر" : "⚠️ القارئ الليزري غير مفعل! انقر على المستطيل أعلاه لتفعيله"}
