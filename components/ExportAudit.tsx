@@ -229,7 +229,7 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
 
   // تنشيط وتحميل طبلية محددة للجرد بالكرتون
   const handleLoadPallet = (palletCodeRaw: string) => {
-    const code = palletCodeRaw.trim().toUpperCase();
+    const code = palletCodeRaw.replace(/\s+/g, '').toUpperCase();
     if (!code) return;
 
     const items = palletIndex[code];
@@ -294,7 +294,7 @@ export const ExportAudit: React.FC<Props> = ({ palletTypes, currentUser, onNotif
 
   // معالجة قراءة الباركود للكرتون
   const handleScanCarton = (barcodeRaw: string) => {
-    const code = barcodeRaw.trim().toUpperCase();
+    const code = barcodeRaw.replace(/\s+/g, '').toUpperCase();
     if (!code) return;
 
     // تهيئة حالة المسح الحالية للبدء من جديد
