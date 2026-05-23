@@ -1,8 +1,10 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition, UserCredentials, PalletStatus } from '../types';
 import { db } from '../firebase';
-import { doc, updateDoc, collection, addDoc, deleteField, getDoc, writeBatch } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, deleteField, getDoc, writeBatch, query, where, orderBy, limit, startAfter, getDocs, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
+import { useInView } from 'react-intersection-observer';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 declare var html2pdf: any;
 
@@ -19,7 +21,34 @@ interface Props {
 
 type LabelSize = '10x15' | '3x4';
 
-export const History: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify }) => {
+export class LocalErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: any}> {
+  constructor(props: {children: React.ReactNode}) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return <div className="p-10 text-red-500 font-bold bg-rose-50 border-rose-200" dir="ltr">
+        <h1>History Crash:</h1>
+        <pre className="whitespace-pre-wrap">{String(this.state.error?.stack || this.state.error)}</pre>
+      </div>;
+    }
+    return this.props.children;
+  }
+}
+
+export const History: React.FC<Props> = (props) => {
+  return (
+    <LocalErrorBoundary>
+      <HistoryInner {...props} />
+    </LocalErrorBoundary>
+  );
+};
+
+const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending' | 'cancelled'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -36,9 +65,13 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   const [isCancelling, setIsCancelling] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkCancelling, setIsBulkCancelling] = useState(false);
-
   const [isRestoring, setIsRestoring] = useState<string | null>(null);
+
   const isAdmin = useMemo(() => userCode === 'ADMIN' || (role as string) === 'admin', [userCode, role]);
+
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const [displayCount, setDisplayCount] = useState(50);
 
   const handleRestoreRecord = async (record: InventoryRecord) => {
     setIsRestoring(record.id);
@@ -140,24 +173,24 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
   };
 
   // جلب اسم المنشأة ديناميكياً
-  const getEntityName = (code: string) => {
+  const getEntityName = (code: any) => {
      if (!code) return 'غير معروف';
-     const normCode = code.trim().toUpperCase();
+     const normCode = String(code).trim().toUpperCase();
      if (normCode === 'MISDIRECTED_CORRECTED' || normCode === 'WRONG_DEST') return 'توجيه خاطئ';
-     const u = users.find(u => u.code.trim().toUpperCase() === normCode);
-     if (!u) return code;
+     const u = users.find(u => String(u.code || '').trim().toUpperCase() === normCode);
+     if (!u) return String(code);
      let name = u.locationName || u.displayName || code;
 
      // Explicit fixes for main centers
-     if (u.code === 'DMM' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز الدمام';
-     if (u.code === 'RYD' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز الرياض';
-     if (u.code === 'JED' && (!u.locationName || u.locationName.includes('-'))) name = 'مركز جدة';
+     if (u.code === 'DMM' && (!u.locationName || String(u.locationName).includes('-'))) name = 'مركز الدمام';
+     if (u.code === 'RYD' && (!u.locationName || String(u.locationName).includes('-'))) name = 'مركز الرياض';
+     if (u.code === 'JED' && (!u.locationName || String(u.locationName).includes('-'))) name = 'مركز جدة';
 
-     if (name.includes(' - ')) {
-       const parts = name.split(' - ');
-       return parts[1].trim();
+     if (String(name).includes(' - ')) {
+       const parts = String(name).split(' - ');
+       return parts[1] ? String(parts[1]).trim() : String(name);
      }
-     return name;
+     return String(name);
   };
 
   const formatDateTime = (ts: number | undefined) => {
@@ -189,20 +222,20 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
     const centers = users.filter(u => u.role === 'center');
     const unique = new Map<string, UserCredentials & { displayName: string }>();
     const sortedCenters = [...centers].sort((a, b) => {
-      const aHasLocation = !!(a.locationName && a.locationName.trim());
-      const bHasLocation = !!(b.locationName && b.locationName.trim());
+      const aHasLocation = !!(a.locationName && String(a.locationName).trim());
+      const bHasLocation = !!(b.locationName && String(b.locationName).trim());
       if (aHasLocation && !bHasLocation) return -1;
       if (!aHasLocation && bHasLocation) return 1;
       return 0;
     });
 
     sortedCenters.forEach(c => {
-      const normalizedCode = (c.code || '').trim().toUpperCase();
+      const normalizedCode = String(c.code || '').trim().toUpperCase();
       if (normalizedCode && !unique.has(normalizedCode)) {
         let finalName = c.locationName || c.displayName || c.username;
-        if (normalizedCode === 'DMM' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الدمام';
-        if (normalizedCode === 'RYD' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز الرياض';
-        if (normalizedCode === 'JED' && (!c.locationName || c.locationName.includes('-'))) finalName = 'مركز جدة';
+        if (normalizedCode === 'DMM' && (!c.locationName || String(c.locationName).includes('-'))) finalName = 'مركز الدمام';
+        if (normalizedCode === 'RYD' && (!c.locationName || String(c.locationName).includes('-'))) finalName = 'مركز الرياض';
+        if (normalizedCode === 'JED' && (!c.locationName || String(c.locationName).includes('-'))) finalName = 'مركز جدة';
         unique.set(normalizedCode, { ...c, code: normalizedCode, displayName: finalName });
       }
     });
@@ -213,7 +246,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
     const factories = users.filter(u => u.role === 'factory');
     const unique = new Map<string, UserCredentials & { displayName: string }>();
     factories.forEach(f => {
-      const normalizedCode = (f.code || '').trim().toUpperCase();
+      const normalizedCode = String(f.code || '').trim().toUpperCase();
       if (normalizedCode && !unique.has(normalizedCode)) {
         let finalName = f.displayName || f.username;
         if (normalizedCode === 'OPK') finalName = 'مطبعة العبيكان';
@@ -243,56 +276,63 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       // الملصقات الملغاة تظهر فقط لمسئول النظام
       if (record.status === 'cancelled' && !isAdmin) return false;
 
+      const barcode = (record.palletBarcode || '').trim().toUpperCase();
+      const isAdjustment = (record.notes && (String(record.notes).includes('تسوية') || String(record.notes).includes('زيادة'))) || record.isExtraOnly || barcode.startsWith('ADJ-');
+
+      // التسويات والزيادات والنقص (زيادة، تسوية، ADJ-، isExtraOnly) لا تظهر إلا لمسؤول النظام
+      if (isAdjustment && !isAdmin) {
+        return false;
+      }
+
       let isVisible = false;
       if (isAdmin || role === 'monitor') isVisible = true;
       else if (role === 'factory') isVisible = (record.palletBarcode || '').includes(userCode);
       else if (role === 'center' && userCenter) {
-        const barcode = (record.palletBarcode || '').trim().toUpperCase();
-        // أخفِ سجلات التسوية اليدوية والمخزون الإضافي والزيادات المكتشفة عن مدراء المراكز
-        if ((record.notes && (record.notes.includes('تسوية') || record.notes.includes('زيادة'))) || record.isExtraOnly || barcode.startsWith('ADJ-')) {
-          isVisible = false;
-        } else {
-          const targetCenter = (record.receivedByCenter || (record.status === 'received' && record.isWrongDestination ? 'WRONG_DEST' : record.destination)).trim().toUpperCase();
-          const DAMMAM_MISDIRECTED_BARCODES = [
-            'G01YOM1177316', 'G01YOM1177416', 'G01YOM1177516', 'G01YOM1177616', 'G01YOM1177716',
-            'G02YOM1177816', 'G02YOM1177916', 'G02YOM1178016',
-            'G03YOM1178116',
-            'G05YOM1178216', 'G05YOM1178316', 'G05YOM1178416', 'G05YOM1178516', 'G05YOM1178616', 'G05YOM1178716', 'G05YOM1178816',
-            'G06YOM1178916', 'G06YOM1179016', 'G06YOM1179116', 'G06YOM1179216',
-            'G07YOM1179316', 'G07YOM1179416', 'G07YOM1179516'
-          ];
-          let finalTarget = targetCenter;
-          const barcode = (record.palletBarcode || '').trim().toUpperCase();
-          if ((finalTarget === 'DAMMAM' || finalTarget === 'DMM') && barcode && DAMMAM_MISDIRECTED_BARCODES.includes(barcode)) {
-            finalTarget = 'WRONG_DEST';
-          }
-          isVisible = finalTarget === userCenter.trim().toUpperCase();
+        const targetCenter = String(record.receivedByCenter || (record.status === 'received' && record.isWrongDestination ? 'WRONG_DEST' : (record.destination || ''))).trim().toUpperCase();
+        const DAMMAM_MISDIRECTED_BARCODES = [
+          'G01YOM1177316', 'G01YOM1177416', 'G01YOM1177516', 'G01YOM1177616', 'G01YOM1177716',
+          'G02YOM1177816', 'G02YOM1177916', 'G02YOM1178016',
+          'G03YOM1178116',
+          'G05YOM1178216', 'G05YOM1178316', 'G05YOM1178416', 'G05YOM1178516', 'G05YOM1178616', 'G05YOM1178716', 'G05YOM1178816',
+          'G06YOM1178916', 'G06YOM1179016', 'G06YOM1179116', 'G06YOM1179216',
+          'G07YOM1179316', 'G07YOM1179416', 'G07YOM1179516'
+        ];
+        let finalTarget = targetCenter;
+        if ((finalTarget === 'DAMMAM' || finalTarget === 'DMM') && barcode && DAMMAM_MISDIRECTED_BARCODES.includes(barcode)) {
+          finalTarget = 'WRONG_DEST';
         }
+        isVisible = finalTarget === String(userCenter).trim().toUpperCase();
       }
       
       const trip = trips.find(t => t.id === record.tripId);
       
       if (isVisible && role !== 'center' && destinationFilter !== 'ALL') {
-        const targetCenter = (record.receivedByCenter || (record.status === 'received' && record.isWrongDestination ? 'WRONG_DEST' : record.destination)).trim().toUpperCase();
+        const targetCenter = String(record.receivedByCenter || (record.status === 'received' && record.isWrongDestination ? 'WRONG_DEST' : (record.destination || ''))).trim().toUpperCase();
         isVisible = targetCenter === destinationFilter.trim().toUpperCase();
       }
       if (isVisible && statusFilter !== 'ALL') isVisible = record.status === statusFilter;
       if (isVisible && showDamagedOnly) isVisible = (record.condition && record.condition !== 'intact') || record.hasDiscrepancy;
       
-      const isActuallyWrongDest = record.isWrongDestination || (record.notes && record.notes.includes('توجيه خاطئ'));
+      const isActuallyWrongDest = record.isWrongDestination || (record.notes && String(record.notes).includes('توجيه خاطئ'));
       if (isVisible && showWrongDestinationsOnly) isVisible = !!isActuallyWrongDest;
 
       // Search Filter
       if (isVisible && searchQuery) {
-        const query = searchQuery.toLowerCase().trim();
-        const barcodeMatch = record.palletBarcode.toLowerCase().includes(query);
-        const tripNumMatch = trip?.tripNumber.toLowerCase().includes(query);
+        const query = String(searchQuery).toLowerCase().trim();
+        const barcodeMatch = String(record.palletBarcode || '').toLowerCase().includes(query);
+        const tripNumMatch = String(trip?.tripNumber || '').toLowerCase().includes(query);
         isVisible = barcodeMatch || tripNumMatch;
       }
       
       // Date Filter
       if (isVisible && dateFilter) {
-        const recordDate = new Date(record.timestamp).toISOString().split('T')[0];
+        let recordDate = '';
+        if (record.timestamp) {
+           const d = new Date(record.timestamp);
+           if (!isNaN(d.getTime())) {
+             recordDate = d.toISOString().split('T')[0];
+           }
+        }
         isVisible = recordDate === dateFilter;
       }
 
@@ -303,7 +343,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
 
       // Filter by Press / Factory
       if (isVisible && pressFilter !== 'ALL') {
-        const recordPressCode = trip ? (trip.pressCode || '').trim().toUpperCase() : (record.palletBarcode.includes('OPK') ? 'OPK' : 'UNI');
+        const recordPressCode = trip ? (trip.pressCode || '').trim().toUpperCase() : ((record.palletBarcode || '').includes('OPK') ? 'OPK' : 'UNI');
         isVisible = recordPressCode === pressFilter.trim().toUpperCase();
       }
       
@@ -312,15 +352,34 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       const timeA = a.timestamp || 0;
       const timeB = b.timestamp || 0;
       if (timeB !== timeA) return timeB - timeA;
-      return b.id.localeCompare(a.id); // التحقق من المعرف للثبات في حال تطابق الوقت
+      return (b.id || '').localeCompare(a.id || ''); // التحقق من المعرف للثبات في حال تطابق الوقت
     });
   }, [records, role, userCode, userCenter, destinationFilter, statusFilter, showDamagedOnly, searchQuery, dateFilter, palletTypeFilter, pressFilter, trips]);
+
+  const visibleRecords = useMemo(() => {
+    return filteredRecords.slice(0, displayCount);
+  }, [filteredRecords, displayCount]);
+
+  const { ref: loadMoreRef, inView } = useInView({
+    rootMargin: '200px',
+  });
+
+  useEffect(() => {
+    if (inView && displayCount < filteredRecords.length) {
+      setDisplayCount(prev => Math.min(prev + 50, filteredRecords.length));
+    }
+  }, [inView, filteredRecords.length, displayCount]);
+
+  // Reset displayCount when any filter changes
+  useEffect(() => {
+    setDisplayCount(50);
+  }, [destinationFilter, statusFilter, searchQuery, dateFilter, palletTypeFilter, pressFilter, showDamagedOnly, showWrongDestinationsOnly]);
 
   const generateLabelHTML = (record: InventoryRecord, size: LabelSize) => {
     const pType = palletTypes.find(t => t.id === record.palletTypeId);
     const trip = trips.find(t => t.id === record.tripId);
     const tripNumber = trip ? trip.tripNumber : '---';
-    const pressCode = trip ? trip.pressCode : (record.palletBarcode.includes('OPK') ? 'OPK' : 'UNI');
+    const pressCode = trip ? trip.pressCode : ((record.palletBarcode || '').includes('OPK') ? 'OPK' : 'UNI');
     const barcodeImgUrl = `https://bwipjs-api.metafloor.com/?bcid=code128&text=${record.palletBarcode}&scale=4&rotate=N&includetext=false`;
     const isLarge = size === '10x15';
 
@@ -482,6 +541,13 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       setIsCancelling(null);
     }
   };
+
+  const rowVirtualizer = useVirtualizer({
+    count: visibleRecords.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 110,
+    overscan: 5,
+  });
 
   return (
     <div className="space-y-6 animate-fadeIn pb-24 text-right" dir="rtl">
@@ -647,12 +713,14 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
       </div>
 
       <div className="space-y-4 px-4">
-        {filteredRecords.length === 0 ? (
+        {filteredRecords.length === 0 && (
           <div className="py-20 text-center space-y-3 bg-white rounded-[3rem] border border-dashed border-slate-200">
              <div className="text-4xl opacity-20">📂</div>
              <p className="text-slate-400 font-bold text-xs">لا توجد سجلات متاحة حالياً</p>
           </div>
-        ) : (
+        )}
+
+        {filteredRecords.length > 0 && (
           <>
             {isAdmin && filteredRecords.some(r => r.status !== 'cancelled') && (
               <div className="bg-white p-4 rounded-3xl border border-slate-100/80 flex flex-wrap justify-between items-center gap-3 shadow-sm animate-fadeIn">
@@ -692,15 +760,26 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                 </div>
               </div>
             )}
-            {filteredRecords.map(record => {
-            const isExpanded = expandedId === record.id;
-            const cond = getConditionLabel(record);
-            const pType = palletTypes.find(t => t.id === record.palletTypeId);
-            const trip = trips.find(t => t.id === record.tripId);
-
-            return (
-              <div key={record.id} className={`bg-white rounded-[2.5rem] shadow-sm border transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-2 ring-indigo-500 border-transparent' : 'border-slate-100'} ${selectedIds.has(record.id) ? 'bg-indigo-50/50' : ''}`}>
-                <div onClick={() => setExpandedId(isExpanded ? null : record.id)} className={`p-6 flex justify-between items-center cursor-pointer active:bg-slate-50 ${isExpanded ? 'bg-indigo-50/30' : 'bg-white'}`}>
+            <div ref={parentRef} className="max-h-[75vh] overflow-y-auto custom-scrollbar no-scrollbar" style={{ overscrollBehavior: 'contain' }}>
+              <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                {rowVirtualizer.getVirtualItems().map(virtualRow => {
+                  const record = visibleRecords[virtualRow.index];
+                  if (!record) return null;
+                  const isExpanded = expandedId === record.id;
+                  const cond = getConditionLabel(record);
+                  const pType = palletTypes.find(t => t.id === record.palletTypeId);
+                  const trip = trips.find(t => t.id === record.tripId);
+                  
+                  return (
+                    <div 
+                      key={record.id}
+                      data-index={virtualRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
+                      className="pb-4"
+                    >
+                      <div className={`bg-white rounded-[2.5rem] shadow-sm border transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-2 ring-indigo-500 border-transparent' : 'border-slate-100'} ${selectedIds.has(record.id) ? 'bg-indigo-50/50' : ''}`}>
+                        <div onClick={() => setExpandedId(isExpanded ? null : record.id)} className={`p-6 flex justify-between items-center cursor-pointer active:bg-slate-50 ${isExpanded ? 'bg-indigo-50/30' : 'bg-white'}`}>
                   <div className="flex items-center gap-4">
                     {isAdmin && record.status !== 'cancelled' && (
                       <div 
@@ -725,7 +804,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                          </span>
                        )}
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${cond.color}`}>{cond.text}</span>
-                       {(record.isWrongDestination || (record.notes && record.notes.includes('توجيه خاطئ'))) && (
+                       {(record.isWrongDestination || (record.notes && String(record.notes).includes('توجيه خاطئ'))) && (
                          <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">🚩 توجيه خاطئ</span>
                        )}
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${
@@ -743,8 +822,8 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                     
                     {(() => {
                       const isWrong = record.isWrongDestination || 
-                                     (record.receivedByCenter && record.receivedByCenter.trim().toUpperCase() !== record.destination.trim().toUpperCase()) ||
-                                     (record.notes && record.notes.includes('توجيه خاطئ'));
+                                     (record.receivedByCenter && record.destination && String(record.receivedByCenter).trim().toUpperCase() !== String(record.destination).trim().toUpperCase()) ||
+                                     (record.notes && String(record.notes).includes('توجيه خاطئ'));
 
                       if (isWrong) {
                         return (
@@ -808,8 +887,8 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
 
                     {(() => {
                       const isWrong = record.isWrongDestination || 
-                                     (record.receivedByCenter && record.receivedByCenter.trim().toUpperCase() !== record.destination.trim().toUpperCase()) ||
-                                     (record.notes && record.notes.includes('توجيه خاطئ'));
+                                     (record.receivedByCenter && record.destination && String(record.receivedByCenter).trim().toUpperCase() !== String(record.destination).trim().toUpperCase()) ||
+                                     (record.notes && String(record.notes).includes('توجيه خاطئ'));
 
                       if (isWrong) {
                         return (
@@ -988,7 +1067,7 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                       </div>
                     )}
 
-                    {(isAdmin || role === 'monitor') && record.hasDiscrepancy && (
+                    {isAdmin && record.hasDiscrepancy && (
                       <div className="bg-amber-50 border border-amber-100 p-4 rounded-3xl space-y-3">
                          <span className="text-[11px] font-black text-amber-800 block text-right">⚖️ تقرير التباين (نقص/زيادة)</span>
                          <div className="grid grid-cols-2 gap-2">
@@ -1023,8 +1102,17 @@ export const History: React.FC<Props> = ({ records, trips, palletTypes, role, us
                   </div>
                 )}
               </div>
+            </div>
             );
           })}
+          </div>
+          {displayCount < filteredRecords.length && (
+            <div ref={loadMoreRef} className="py-6 text-center text-xs text-slate-400 font-bold flex items-center justify-center gap-2" dir="rtl">
+              <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              <span>جاري تحميل المزيد من السجلات...</span>
+            </div>
+          )}
+          </div>
           </>
         )}
       </div>
