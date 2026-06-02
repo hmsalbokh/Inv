@@ -17,6 +17,7 @@ interface Props {
   userCenter: CenterCode | null;
   users: UserCredentials[]; // إضافة قائمة المستخدمين
   onNotify?: (title: string, msg: string) => void;
+  isActive?: boolean;
 }
 
 type LabelSize = '10x15' | '3x4';
@@ -48,7 +49,7 @@ export const History: React.FC<Props> = (props) => {
   );
 };
 
-const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify }) => {
+const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify, isActive }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending' | 'cancelled'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -548,6 +549,14 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
     estimateSize: () => 110,
     overscan: 5,
   });
+
+  useEffect(() => {
+    if (isActive) {
+      setTimeout(() => {
+        rowVirtualizer.measure();
+      }, 50);
+    }
+  }, [isActive, rowVirtualizer]);
 
   return (
     <div className="space-y-6 animate-fadeIn pb-24 text-right" dir="rtl">

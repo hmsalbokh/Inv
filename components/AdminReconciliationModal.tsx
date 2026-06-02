@@ -87,7 +87,8 @@ export default function AdminReconciliationModal({
       
       const warehouseBundles = receivedBundles - executedOutboundBundles;
       const committedBundles = plannedOutboundBundles;
-      const freeBundles = warehouseBundles - committedBundles;
+      // تعديل: الرصيد المتبقي الحر لا يخصم الرحلات المخططة الملتزم بها ولم تنطلق بعد
+      const freeBundles = warehouseBundles;
 
       const warehouseBalance = warehouseBundles / (pt.bundlesPerCarton || 1);
       const committedCartons = committedBundles / (pt.bundlesPerCarton || 1);
@@ -97,9 +98,9 @@ export default function AdminReconciliationModal({
       const physCartons = phys.cartons === '' ? currentFreeBalance : parseInt(phys.cartons || '0', 10);
       const physBundles = phys.bundles === '' ? 0 : parseInt(phys.bundles || '0', 10);
       
-      // Target warehouse balance = Target Free Balance + committed
+      // الرصيد المطلوب للمستودع يساوي الرصيد المطلوب المتبقي الحر لعدم خصم الرحلات المخططة
       const targetFreeBundles = (physCartons * pt.bundlesPerCarton) + physBundles;
-      const targetWarehouseBundles = targetFreeBundles + committedBundles;
+      const targetWarehouseBundles = targetFreeBundles;
       const gapBundles = warehouseBundles - targetWarehouseBundles;
       const gapCartons = gapBundles / (pt.bundlesPerCarton || 1);
 
@@ -238,8 +239,8 @@ export default function AdminReconciliationModal({
                            <th className="px-4 py-3 text-xs font-black text-slate-600">المرحلة</th>
                            <th className="px-4 py-3 text-xs font-black text-slate-600">رصيد المستودع (نظامي)</th>
                            <th className="px-4 py-3 text-xs font-black text-amber-600">رحلات مخططة (محجوز)</th>
-                            <th className="px-4 py-3 text-xs font-black text-indigo-700 bg-indigo-50/50">الرصيد الحر الحالي</th>
-                           <th className="px-4 py-3 text-xs font-black text-indigo-900 border-x border-indigo-100 text-center bg-indigo-100/30">الرصيد الحر المطلوب</th>
+                            <th className="px-4 py-3 text-xs font-black text-indigo-700 bg-indigo-50/50">الرصيد المتبقي الحر الحالي</th>
+                           <th className="px-4 py-3 text-xs font-black text-indigo-900 border-x border-indigo-100 text-center bg-indigo-100/30">الرصيد المتبقي الحر المطلوب</th>
                            <th className="px-4 py-3 text-xs font-black text-slate-600">قيمة التسوية</th>
                        </tr>
                    </thead>
@@ -317,7 +318,7 @@ export default function AdminReconciliationModal({
                 💡 كيف تعمل هذه الأداة؟
               </h4>
               <p className="text-[10px] text-indigo-700 leading-relaxed">
-                أدخل في خانة <strong>"الرصيد الحر المطلوب"</strong> الرقم الذي تريد أن تراه متاحاً للصرف في المركز. 
+                أدخل في خانة <strong>"الرصيد المتبقي الحر المطلوب"</strong> الرقم الذي تريد أن تراه متاحاً للصرف في المركز. 
                 النظام سيقوم أوتوماتيكياً بحساب "الرحلات المخططة" وإضافة/خصم الكمية المطلوبة من رصيد المخزون لضمان النتيجة التي تريدها تماماً.
               </p>
            </div>

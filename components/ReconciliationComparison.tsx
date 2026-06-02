@@ -63,25 +63,26 @@ export default function ReconciliationComparison({
         receivedCartons += (baseCount + diffCount);
       });
 
-      // 2. Executed Outbound
+      // 2. Executed Outbound (تشمل الرحلات المنفذة والمنطلقة فعلياً)
       let executedCartons = 0;
-      const executedTrips = centerTrips.filter(t => t.status === 'executed');
+      const executedTrips = centerTrips.filter(t => t.status === 'executed' || t.status === 'dispatched');
       executedTrips.forEach(t => {
         const qList = t.executedQuantities || t.quantities || [];
         const item = qList.find(q => q.palletTypeId === pt.id);
         if (item) executedCartons += item.cartonCount;
       });
 
-      // 3. Planned Outbound (Planned or Dispatched but not yet Executed)
+      // 3. Planned Outbound (الرحلات المخططة فقط ولم تنطلق بعد)
       let plannedCartons = 0;
-      const plannedTrips = centerTrips.filter(t => t.status === 'planned' || t.status === 'dispatched');
+      const plannedTrips = centerTrips.filter(t => t.status === 'planned');
       plannedTrips.forEach(t => {
         const item = t.quantities.find(q => q.palletTypeId === pt.id);
         if (item) plannedCartons += item.cartonCount;
       });
 
       const remainingBalance = receivedCartons - executedCartons;
-      const freeBalance = receivedCartons - (executedCartons + plannedCartons);
+      // تعديل: الرصيد المتبقي الحر لا يخصم الرحلات المخططة التي لم تنطلق بعد
+      const freeBalance = receivedCartons - executedCartons;
 
       return {
         pt,
@@ -136,7 +137,7 @@ export default function ReconciliationComparison({
                   <span className="text-sm font-black text-indigo-600">{stats.reduce((acc, s) => acc + s.remainingBalance, 0).toLocaleString()} كرتون</span>
                </div>
                <div className="px-4 py-2 bg-white rounded-xl border border-emerald-100 shadow-sm flex flex-col">
-                  <span className="text-[10px] font-bold text-slate-400">إجمالي الرصيد الحر</span>
+                  <span className="text-[10px] font-bold text-slate-400">إجمالي الرصيد المتبقي الحر</span>
                   <span className="text-sm font-black text-emerald-600">{stats.reduce((acc, s) => acc + s.freeBalance, 0).toLocaleString()} كرتون</span>
                </div>
             </div>
@@ -149,7 +150,7 @@ export default function ReconciliationComparison({
                   <th className="px-6 py-4 text-xs font-black text-slate-500 w-1/4">المرحلة التعليمية</th>
                   <th className="px-6 py-4 text-xs font-black text-indigo-600 text-center">نتائج أداة التسوية</th>
                   <th className="px-6 py-4 text-xs font-black text-slate-800 text-center">الرصيد المتبقي (المستودع)</th>
-                  <th className="px-6 py-4 text-xs font-black text-emerald-600 text-center">الرصيد الحر المتبقي</th>
+                  <th className="px-6 py-4 text-xs font-black text-emerald-600 text-center">الرصيد المتبقي الحر</th>
                   <th className="px-6 py-4 text-xs font-black text-slate-400 text-center">المخطط صرفه</th>
                 </tr>
               </thead>
@@ -218,10 +219,10 @@ export default function ReconciliationComparison({
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-2">
               <div className="flex items-center gap-2 text-emerald-600">
                 <span className="text-xl">🔓</span>
-                <span className="text-xs font-black">الرصيد الحر المتبقي</span>
+                <span className="text-xs font-black">الرصيد المتبقي الحر</span>
               </div>
               <p className="text-[10px] font-bold text-slate-500 leading-relaxed">
-                هو الرصيد المتاح حالياً للتخطيط لرحلات جديدة. 
+                هو الرصيد المتبقي من كل مرحلة والتي لم يتم إطلاقها في رحلات بعد (موزعة ككرتون وحزمة زائدة).
                 المعادلة = الرصيد المتبقي بمستودع المركز - الرحلات المخططة والمنطلقة.
               </p>
             </div>

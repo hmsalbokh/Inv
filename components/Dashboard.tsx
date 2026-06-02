@@ -1205,9 +1205,9 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
             totalBundles += b;
           });
 
-          // الحساب الصحيح للرصيد المتبقي الحر: المستلم - (المنفذ + المشحون + المخطط)
-          const remainingCartonsTotal = Math.max(0, totalCartons - typeExportedCartons - plannedQty);
-          const remainingBundlesTotal = Math.max(0, totalBundles - typeExportedBundles - (plannedQty * type.bundlesPerCarton));
+          // الحساب الصحيح للرصيد المتبقي الحر: المستلم - (المنفذ + المشحون) [لا تخصم الرحلات المخططة التي لم تنطلق]
+          const remainingCartonsTotal = Math.max(0, totalCartons - typeExportedCartons);
+          const remainingBundlesTotal = Math.max(0, totalBundles - typeExportedBundles);
           
           const remainingPallets = type.cartonsPerPallet > 0 ? (remainingCartonsTotal / type.cartonsPerPallet).toFixed(2) : '0';
 
@@ -2607,7 +2607,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                   }
                 });
 
-                const stageRemainingB = Math.max(0, stageReceivedB - stageShippedB - stagePlannedB);
+                // تعديل: الرصيد المتبقي الحر لا يخصم الرحلات المخططة التي لم يتم إطلاقها بعد
+                const stageRemainingB = Math.max(0, stageReceivedB - stageShippedB);
                 totalRemainingCartonsSum += Math.floor(stageRemainingB / type.bundlesPerCarton);
                 totalRemainingBundlesSum += (stageRemainingB % type.bundlesPerCarton);
                 totalRemainingBundlesRaw += stageRemainingB;
@@ -2733,7 +2734,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                             }
                           });
 
-                          const remainingBundlesTotal = Math.max(0, stageReceivedBundles - stageShippedBundles - stagePlannedBundles);
+                          const remainingBundlesTotal = Math.max(0, stageReceivedBundles - stageShippedBundles);
                           
                           // ندرج كافة المراحل لسهولة التتبع
                           details.push({
@@ -3626,7 +3627,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
             </div>
             <div className="p-4 bg-emerald-50 border-b border-emerald-100">
                <p className="text-[10px] font-black text-emerald-800 text-center leading-relaxed">
-                 💡 يتم تحويل إجمالي الحزم المتبقية لكل مرحلة إلى كراتين كاملة وما تبقى يظهر كحزم لضمان دقة الرصيد.
+                 💡 الرصيد المتبقي الحر هو الرصيد المتبقي من كل مرحلة والتي لم يتم إطلاقها.
                </p>
             </div>
             <div className="p-6 max-h-[50vh] overflow-y-auto custom-scrollbar">
@@ -3640,7 +3641,7 @@ centerRecords.filter(r => r.status === 'pending').length}</span>
                           <tr>
                             <th className="px-3 py-2 font-black text-slate-500">المرحلة</th>
                             <th className="px-3 py-2 font-black text-slate-500 text-center">كرتون</th>
-                            <th className="px-3 py-2 font-black text-slate-500 text-center">حزمة</th>
+                            <th className="px-3 py-2 font-black text-slate-500 text-center">حزمة زائدة</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">

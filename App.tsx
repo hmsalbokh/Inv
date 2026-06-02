@@ -109,6 +109,18 @@ export const App: React.FC = () => {
   // صلاحية جرد الصادر للمراكز
   const [allowCentersExport, setAllowCentersExport] = useState<boolean>(false);
 
+  // تتبع الصفحات المفتوحة مسبقاً لضمان سرعة فائقة عند التبديل بينها (التخزين المؤقت وحفظ الـ DOM)
+  const [visitedTabs, setVisitedTabs] = useState<Record<string, boolean>>({
+    dashboard: true,
+  });
+
+  useEffect(() => {
+    setVisitedTabs(prev => {
+      if (prev[activeTab]) return prev;
+      return { ...prev, [activeTab]: true };
+    });
+  }, [activeTab]);
+
   // 0. مستمع حالة المصادقة في Firebase
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -745,91 +757,105 @@ export const App: React.FC = () => {
       </header>
       
       <main className="flex-1 overflow-y-auto p-4 pb-28">
-        {activeTab === 'dashboard' && (
-          <Dashboard 
-            palletTypes={palletTypes} 
-            records={records} 
-            trips={trips} 
-            distributionTrips={distributionTrips}
-            currentTripId={currentTripId} 
-            role={currentUser.role} 
-            userCode={currentUser.code} 
-            userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} 
-            users={users} 
-            onSelectCenter={() => {}} 
-            onNewTrip={handleCreateTrip} 
-            onNotify={(title, msg) => setShowNotification({ title, msg })}
-          />
+        {visitedTabs['dashboard'] && (
+          <div className={activeTab === 'dashboard' ? 'block' : 'hidden'}>
+            <Dashboard 
+              palletTypes={palletTypes} 
+              records={records} 
+              trips={trips} 
+              distributionTrips={distributionTrips}
+              currentTripId={currentTripId} 
+              role={currentUser.role} 
+              userCode={currentUser.code} 
+              userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} 
+              users={users} 
+              onSelectCenter={() => {}} 
+              onNewTrip={handleCreateTrip} 
+              onNotify={(title, msg) => setShowNotification({ title, msg })}
+            />
+          </div>
         )}
         {activeTab === 'scan' && <Scanner onScan={handleScan} role={currentUser.role} currentTruck={currentTruckNumber} onTruckChange={setCurrentTruckNumber} currentTripId={currentTripId} records={records} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} palletTypes={palletTypes} onNotify={(title, msg) => setShowNotification({ title, msg })} />}
-        {activeTab === 'history' && <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} onNotify={(title, msg) => setShowNotification({ title, msg })} />}
-        {activeTab === 'lab' && currentUser.code === 'ADMIN' && (
-          <Lab 
-            records={records}
-            trips={trips}
-            palletTypes={palletTypes}
-            users={users}
-            currentUser={currentUser}
-            distributionTrips={distributionTrips}
-            onNotify={(title, msg) => setShowNotification({ title, msg })}
-          />
+        {visitedTabs['history'] && (
+          <div className={activeTab === 'history' ? 'block' : 'hidden'}>
+            <History records={records} trips={trips} palletTypes={palletTypes} role={currentUser.role} userCode={currentUser.code} userCenter={currentUser.role === 'center' ? currentUser.code as CenterCode : null} users={users} onNotify={(title, msg) => setShowNotification({ title, msg })} isActive={activeTab === 'history'} />
+          </div>
         )}
-        {activeTab === 'export' && (currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport)) && (
-          <ExportAudit 
-            palletTypes={palletTypes}
-            currentUser={currentUser}
-            onNotify={(title, msg) => setShowNotification({ title, msg })}
-          />
+        {visitedTabs['lab'] && currentUser.code === 'ADMIN' && (
+          <div className={activeTab === 'lab' ? 'block' : 'hidden'}>
+            <Lab 
+              records={records}
+              trips={trips}
+              palletTypes={palletTypes}
+              users={users}
+              currentUser={currentUser}
+              distributionTrips={distributionTrips}
+              onNotify={(title, msg) => setShowNotification({ title, msg })}
+            />
+          </div>
         )}
-        {activeTab === 'settings' && currentUser.code === 'ADMIN' && (
-          <Settings 
-            palletTypes={palletTypes} 
-            users={users} 
-            onUpdateUsers={async (nu) => { 
-              try {
-                const batch = writeBatch(db);
-                // Find users to delete
-                const currentIds = users.map(u => u.id);
-                const newIds = nu.map(u => u.id);
-                const toDelete = currentIds.filter(id => !newIds.includes(id));
-                
-                toDelete.forEach(id => batch.delete(doc(db, 'users', id)));
-                nu.forEach(u => batch.set(doc(db, 'users', u.id), u));
-                
-                await batch.commit();
-              } catch (e) {
-                handleFirestoreError(e, OperationType.WRITE, 'users');
-              }
-            }} 
-            onUpdate={async (u) => { 
-              try {
-                await setDoc(doc(db, 'palletTypes', u.id), u);
-              } catch (e) {
-                handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
-              }
-            }} 
-            onAdd={async (t) => { 
-              try {
-                const id = generateUUID();
-                await setDoc(doc(db, 'palletTypes', id), { ...t, id });
-              } catch (e) {
-                handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
-              }
-            }} 
-            onDelete={async (id) => { 
-              try {
-                await deleteDoc(doc(db, 'palletTypes', id));
-              } catch (e) {
-                handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
-              }
-            }} 
-            onResetData={handleResetAllData} 
-            onResetStages={handleResetStagesToDefault}
-            onMigrateData={handleMigrateFromOldDb}
-            onNotify={(title, msg) => setShowNotification({ title, msg })}
-            allowCentersExport={allowCentersExport}
-            onToggleCentersExport={handleToggleCentersExport}
-          />
+        {visitedTabs['export'] && (currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport)) && (
+          <div className={activeTab === 'export' ? 'block' : 'hidden'}>
+            <ExportAudit 
+              palletTypes={palletTypes}
+              currentUser={currentUser}
+              onNotify={(title, msg) => setShowNotification({ title, msg })}
+              records={records}
+              distributionTrips={distributionTrips}
+            />
+          </div>
+        )}
+        {visitedTabs['settings'] && currentUser.code === 'ADMIN' && (
+          <div className={activeTab === 'settings' ? 'block' : 'hidden'}>
+            <Settings 
+              palletTypes={palletTypes} 
+              users={users} 
+              onUpdateUsers={async (nu) => { 
+                try {
+                  const batch = writeBatch(db);
+                  // Find users to delete
+                  const currentIds = users.map(u => u.id);
+                  const newIds = nu.map(u => u.id);
+                  const toDelete = currentIds.filter(id => !newIds.includes(id));
+                  
+                  toDelete.forEach(id => batch.delete(doc(db, 'users', id)));
+                  nu.forEach(u => batch.set(doc(db, 'users', u.id), u));
+                  
+                  await batch.commit();
+                } catch (e) {
+                  handleFirestoreError(e, OperationType.WRITE, 'users');
+                }
+              }} 
+              onUpdate={async (u) => { 
+                try {
+                  await setDoc(doc(db, 'palletTypes', u.id), u);
+                } catch (e) {
+                  handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
+                }
+              }} 
+              onAdd={async (t) => { 
+                try {
+                  const id = generateUUID();
+                  await setDoc(doc(db, 'palletTypes', id), { ...t, id });
+                } catch (e) {
+                  handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
+                }
+              }} 
+              onDelete={async (id) => { 
+                try {
+                  await deleteDoc(doc(db, 'palletTypes', id));
+                } catch (e) {
+                  handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
+                }
+              }} 
+              onResetData={handleResetAllData} 
+              onResetStages={handleResetStagesToDefault}
+              onMigrateData={handleMigrateFromOldDb}
+              onNotify={(title, msg) => setShowNotification({ title, msg })}
+              allowCentersExport={allowCentersExport}
+              onToggleCentersExport={handleToggleCentersExport}
+            />
+          </div>
         )}
       </main>
       
