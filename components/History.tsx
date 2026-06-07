@@ -788,6 +788,9 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
                   const pType = palletTypes.find(t => t.id === record.palletTypeId);
                   const trip = trips.find(t => t.id === record.tripId);
                   
+                  const dispatchTime = record.factoryTimestamp || record.timestamp || 0;
+                  const isLate = record.status === 'in_transit' && dispatchTime < (Date.now() - 3 * 24 * 60 * 60 * 1000);
+                  
                   return (
                     <div 
                       key={record.id}
@@ -827,12 +830,12 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
                        )}
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${
                          record.status === 'received' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
-                         record.status === 'in_transit' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 
+                         record.status === 'in_transit' ? isLate ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-amber-50 text-amber-600 border border-amber-100' : 
                          record.status === 'cancelled' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                          'bg-slate-50 text-slate-400 border border-slate-100'
                        }`}>
                          {record.status === 'received' ? 'تم الاستلام ✓' : 
-                          record.status === 'in_transit' ? 'في الطريق 🚚' : 
+                          isLate ? 'متأخرة ⏰' : record.status === 'in_transit' ? 'في الطريق 🚚' : 
                           record.status === 'cancelled' ? '⚠️ ملغاة' :
                           'بانتظار التحميل'}
                        </span>
@@ -888,11 +891,11 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
                            <span className="text-[9px] font-black text-slate-400 block uppercase mb-1">الحالة</span>
                            <span className={`text-[10px] font-bold block ${
                              record.status === 'received' ? 'text-emerald-600' : 
-                             record.status === 'in_transit' ? 'text-amber-600' : 
+                             record.status === 'in_transit' ? (isLate ? 'text-rose-600 font-black' : 'text-amber-600') : 
                              'text-slate-400'
                            }`}>
                              {record.status === 'received' ? 'تم الاستلام ✓' : 
-                              record.status === 'in_transit' ? 'في الطريق 🚚' : 
+                              isLate ? 'متأخرة ⏰' : record.status === 'in_transit' ? 'في الطريق 🚚' : 
                               'بانتظار التحميل'}
                            </span>
                         </div>
