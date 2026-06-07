@@ -51,7 +51,7 @@ export const History: React.FC<Props> = (props) => {
 
 const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, userCode, userCenter, users, onNotify, isActive }) => {
   const [destinationFilter, setDestinationFilter] = useState<CenterCode | 'ALL'>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending' | 'cancelled'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'received' | 'in_transit' | 'pending' | 'cancelled' | 'late'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [palletTypeFilter, setPalletTypeFilter] = useState<string | 'ALL'>('ALL');
@@ -311,7 +311,15 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
         const targetCenter = String(record.receivedByCenter || (record.status === 'received' && record.isWrongDestination ? 'WRONG_DEST' : (record.destination || ''))).trim().toUpperCase();
         isVisible = targetCenter === destinationFilter.trim().toUpperCase();
       }
-      if (isVisible && statusFilter !== 'ALL') isVisible = record.status === statusFilter;
+      if (isVisible && statusFilter !== 'ALL') {
+        if (statusFilter === 'late') {
+          const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+          const dispatchTime = record.factoryTimestamp || record.timestamp || 0;
+          isVisible = record.status === 'in_transit' && dispatchTime < threeDaysAgo;
+        } else {
+          isVisible = record.status === statusFilter;
+        }
+      }
       if (isVisible && showDamagedOnly) isVisible = (record.condition && record.condition !== 'intact') || record.hasDiscrepancy;
       
       const isActuallyWrongDest = record.isWrongDestination || (record.notes && String(record.notes).includes('توجيه خاطئ'));
@@ -693,6 +701,7 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
             <button onClick={() => setStatusFilter('received')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'received' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>تم الاستلام ✅</button>
             <button onClick={() => setStatusFilter('in_transit')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'in_transit' ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-600'}`}>في الطريق 🚚</button>
             <button onClick={() => setStatusFilter('pending')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'pending' ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-600'}`}>معلق 🏭</button>
+            <button onClick={() => setStatusFilter('late')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'late' ? 'bg-red-600 text-white' : 'bg-red-50 text-red-600'}`}>متأخرة ⏰</button>
             {isAdmin && (
               <button onClick={() => setStatusFilter('cancelled')} className={`px-4 py-2 rounded-xl text-[10px] font-black whitespace-nowrap transition-all ${statusFilter === 'cancelled' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-600'}`}>الملغاة ⚠️</button>
             )}

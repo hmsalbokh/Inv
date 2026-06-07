@@ -18,6 +18,8 @@ interface Props {
   onNotify: (title: string, msg: string) => void;
   allowCentersExport: boolean;
   onToggleCentersExport: (value: boolean) => Promise<void>;
+  allowedExportCenters: string[];
+  onUpdateAllowedExportCenters: (value: string[]) => Promise<void>;
 }
 
 export const Settings: React.FC<Props> = ({ 
@@ -32,7 +34,9 @@ export const Settings: React.FC<Props> = ({
   onMigrateData, 
   onNotify,
   allowCentersExport,
-  onToggleCentersExport
+  onToggleCentersExport,
+  allowedExportCenters,
+  onUpdateAllowedExportCenters
 }) => {
   const [tab, setTab] = useState<'stages' | 'users' | 'logs'>('users');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -143,8 +147,8 @@ export const Settings: React.FC<Props> = ({
           
           <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-100/70">
             <div className="text-right flex-1 pl-4">
-              <span className="text-xs font-black text-slate-800 block">منح صلاحية جرد الصادر لمراكز الاستلام</span>
-              <span className="text-[9px] text-slate-500 block mt-1 font-bold">عند تفعيلها، سيتمكن موظفو المراكز من جرد الكراتين عبر حساباتهم.</span>
+              <span className="text-xs font-black text-slate-800 block">السماح لجميع مراكز الاستلام بالجرد الصادر</span>
+              <span className="text-[9px] text-slate-500 block mt-1 font-bold">عند تفعيلها، سيتمكن موظفو كافة المراكز من جرد الكراتين عبر حساباتهم.</span>
             </div>
             
             {/* Toggle Switch */}
@@ -156,6 +160,76 @@ export const Settings: React.FC<Props> = ({
                 className={`bg-white w-5.5 h-5.5 rounded-full shadow transition-transform duration-200 absolute top-0.5 left-0.5 ${allowCentersExport ? 'translate-x-[22px]' : 'translate-x-0'}`} 
               />
             </button>
+          </div>
+
+          {/* تفعيل الجرد لمراكز محددة */}
+          <div className="border-t border-slate-100 pt-4 mt-2 text-right">
+            <span className="text-[11px] font-black text-slate-700 block mb-3">أو تفعيل صلاحية الجرد الصادر لمراكز محددة بالتفصيل:</span>
+            
+            {(() => {
+              const centersMap = new Map<string, string>();
+              users.forEach(u => {
+                if (u.role === 'center' && u.code) {
+                  centersMap.set(u.code, u.locationName || u.displayName || u.code);
+                }
+              });
+              const centers = Array.from(centersMap.entries()).map(([code, name]) => ({ code, name }));
+
+              if (centers.length === 0) {
+                return (
+                  <div className="text-center py-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <span className="text-[10px] text-slate-400 font-bold block">لا توجد حسابات مراكز استلام مضافة حالياً</span>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
+                  {centers.map(center => {
+                    const isAllowed = allowCentersExport || (allowedExportCenters || []).includes(center.code);
+                    return (
+                      <div 
+                        key={center.code} 
+                        className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
+                          isAllowed 
+                            ? 'bg-indigo-50/40 border-indigo-100 text-indigo-900 shadow-sm' 
+                            : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="text-right pl-2">
+                          <span className="text-[11px] font-extrabold block leading-tight">{center.name}</span>
+                          <span className="text-[9px] font-bold text-slate-400 block mt-0.5">كود: {center.code}</span>
+                        </div>
+                        
+                        <button 
+                          disabled={allowCentersExport}
+                          onClick={async () => {
+                            let newAllowed = [...(allowedExportCenters || [])];
+                            if (newAllowed.includes(center.code)) {
+                              newAllowed = newAllowed.filter(c => c !== center.code);
+                            } else {
+                              newAllowed.push(center.code);
+                            }
+                            await onUpdateAllowedExportCenters(newAllowed);
+                          }}
+                          className={`w-10 h-5.5 rounded-full p-0.5 transition-colors duration-200 outline-none ${
+                            isAllowed 
+                              ? (allowCentersExport ? 'bg-indigo-200 cursor-not-allowed' : 'bg-indigo-600 cursor-pointer') 
+                              : 'bg-slate-200 cursor-pointer'
+                          } relative shrink-0`}
+                        >
+                          <div 
+                            className={`bg-white w-4.5 h-4.5 rounded-full shadow transition-transform duration-200 absolute top-0.5 left-0.5 ${
+                              isAllowed ? 'translate-x-[18px]' : 'translate-x-0'
+                            }`} 
+                          />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </div>
 

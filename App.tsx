@@ -108,6 +108,7 @@ export const App: React.FC = () => {
 
   // صلاحية جرد الصادر للمراكز
   const [allowCentersExport, setAllowCentersExport] = useState<boolean>(false);
+  const [allowedExportCenters, setAllowedExportCenters] = useState<string[]>([]);
 
   // تتبع الصفحات المفتوحة مسبقاً لضمان سرعة فائقة عند التبديل بينها (التخزين المؤقت وحفظ الـ DOM)
   const [visitedTabs, setVisitedTabs] = useState<Record<string, boolean>>({
@@ -167,6 +168,7 @@ export const App: React.FC = () => {
           setLastResetTimestamp(config.lastResetTimestamp);
         }
         setAllowCentersExport(!!config.allowCentersExport);
+        setAllowedExportCenters(config.allowedExportCenters || []);
       }
     });
     return () => unsubConfig();
@@ -175,12 +177,13 @@ export const App: React.FC = () => {
   // إعادة التوجيه للرئيسية إذا فُقدت صلاحية جرد الصادر
   useEffect(() => {
     if (activeTab === 'export' && currentUser) {
-      const hasAccess = currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport);
+      const hasAccess = currentUser.code === 'ADMIN' || 
+        (currentUser.role === 'center' && (allowCentersExport || allowedExportCenters.includes(currentUser.code)));
       if (!hasAccess) {
         setActiveTab('dashboard');
       }
     }
-  }, [allowCentersExport, activeTab, currentUser]);
+  }, [allowCentersExport, allowedExportCenters, activeTab, currentUser]);
 
   // 2. مستمعو البيانات - يعتمدون على طابع التصفير لفلترة البيانات الشبحية
   useEffect(() => {
@@ -372,6 +375,21 @@ export const App: React.FC = () => {
         msg: val 
           ? 'تم تفعيل صلاحية جرد الصادر لمراكز الاستلام بنجاح وبشكل فوري.' 
           : 'تم تعطيل صلاحية جرد الصادر للمراكز، وأصبح يقتصر على مسئول النظام حالياً.'
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'config/system');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleUpdateAllowedExportCenters = async (centers: string[]) => {
+    try {
+      setSyncing(true);
+      await setDoc(doc(db, 'config', 'system'), { allowedExportCenters: centers }, { merge: true });
+      setShowNotification({
+        title: '🔐 تحديث صلاحيات النظام',
+        msg: 'تم تعديل قائمة المراكز المصرح لها بجرد الصادر بنجاح وبشكل فوري.'
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, 'config/system');
@@ -794,7 +812,7 @@ export const App: React.FC = () => {
             />
           </div>
         )}
-        {visitedTabs['export'] && (currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport)) && (
+        {visitedTabs['export'] && (currentUser.code === 'ADMIN' || (currentUser.role === 'center' && (allowCentersExport || allowedExportCenters.includes(currentUser.code)))) && (
           <div className={activeTab === 'export' ? 'block' : 'hidden'}>
             <ExportAudit 
               palletTypes={palletTypes}
@@ -854,6 +872,8 @@ export const App: React.FC = () => {
               onNotify={(title, msg) => setShowNotification({ title, msg })}
               allowCentersExport={allowCentersExport}
               onToggleCentersExport={handleToggleCentersExport}
+              allowedExportCenters={allowedExportCenters}
+              onUpdateAllowedExportCenters={handleUpdateAllowedExportCenters}
             />
           </div>
         )}
@@ -864,7 +884,7 @@ export const App: React.FC = () => {
           <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} label="📊 الرئيسية" />
           {currentUser.role !== 'monitor' && <NavItem active={activeTab === 'scan'} onClick={() => setActiveTab('scan')} label="📷 مسح" /> }
           <NavItem active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="📋 السجل" />
-          {(currentUser.code === 'ADMIN' || (currentUser.role === 'center' && allowCentersExport)) && <NavItem active={activeTab === 'export'} onClick={() => setActiveTab('export')} label="📤 جرد الصادر" />}
+          {(currentUser.code === 'ADMIN' || (currentUser.role === 'center' && (allowCentersExport || allowedExportCenters.includes(currentUser.code)))) && <NavItem active={activeTab === 'export'} onClick={() => setActiveTab('export')} label="📤 جرد الصادر" />}
           {currentUser.code === 'ADMIN' && <NavItem active={activeTab === 'lab'} onClick={() => setActiveTab('lab')} label="🧪 المختبر" />}
           {currentUser.code === 'ADMIN' && <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} label="⚙️ الإعدادات" /> }
         </div>

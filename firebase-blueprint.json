@@ -75,7 +75,8 @@
       "type": "object",
       "properties": {
         "lastResetTimestamp": { "type": "number" },
-        "allowCentersExport": { "type": "boolean" }
+        "allowCentersExport": { "type": "boolean" },
+        "allowedExportCenters": { "type": "array" }
       }
     }
   },
