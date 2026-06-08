@@ -1,8 +1,24 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition, UserCredentials, PalletStatus } from '../types';
-import { db } from '../firebase';
-import { doc, updateDoc, collection, addDoc, deleteField, getDoc, writeBatch, query, where, orderBy, limit, startAfter, getDocs, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
+import { 
+  db,
+  doc, 
+  updateDoc, 
+  collection, 
+  addDoc, 
+  deleteField, 
+  getDoc, 
+  writeBatch, 
+  query, 
+  where, 
+  orderBy, 
+  limit, 
+  startAfter, 
+  getDocs, 
+  DocumentData, 
+  QueryDocumentSnapshot
+} from '../firebase';
 import { useInView } from 'react-intersection-observer';
 import { useVirtualizer } from '@tanstack/react-virtual';
 

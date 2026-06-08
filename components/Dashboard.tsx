@@ -5,8 +5,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { PalletType, InventoryRecord, Trip, UserRole, PressCode, CenterCode, UserCredentials, DistributionTrip } from '../types';
 import { analyzeInventory } from '../services/geminiService';
 import XLSX from 'xlsx-js-style';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, doc, setDoc, updateDoc, writeBatch, deleteDoc, deleteField, getDoc, addDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, collection, doc, setDoc, updateDoc, writeBatch, deleteDoc, deleteField, getDoc, addDoc } from '../firebase';
 import AdminReconciliationModal from './AdminReconciliationModal';
 import ReconciliationComparison from './ReconciliationComparison';
 
@@ -283,7 +282,7 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        const { getDocFromServer } = await import('firebase/firestore');
+        const { getDocFromServer } = await import('../firebase');
         await getDocFromServer(doc(db, 'config', 'health_check')).catch(() => {});
         setDbStatus('online');
       } catch (err) {

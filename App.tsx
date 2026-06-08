@@ -9,8 +9,11 @@ import { Lab } from './components/Lab';
 import { Login } from './components/Login';
 import { ExportAudit } from './components/ExportAudit';
 import { ConfirmModal } from './components/ConfirmModal';
-import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { 
+  db, 
+  auth, 
+  handleFirestoreError, 
+  OperationType,
   collection, 
   onSnapshot, 
   doc, 
@@ -23,13 +26,15 @@ import {
   getDoc,
   getDocs,
   writeBatch,
-  limit
-} from 'firebase/firestore';
-import { onAuthStateChanged, signOut, signInAnonymously } from 'firebase/auth';
-import { getDocFromServer } from 'firebase/firestore';
+  limit,
+  onAuthStateChanged,
+  signOut,
+  signInAnonymously,
+  getDocFromServer
+} from './firebase';
+import firebaseConfig from './firebase-applet-config.json';
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import firebaseConfig from './firebase-applet-config.json';
 
 const STORAGE_KEY_TYPES = 'v13_types';
 const STORAGE_KEY_RECORDS = 'v13_records';

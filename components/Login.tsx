@@ -2,8 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { UserCredentials } from '../types';
 import { SubulLogo } from './Dashboard';
-import { db } from '../firebase';
-import { collection, addDoc } from 'firebase/firestore';
+import { db, collection, addDoc } from '../firebase';
 
 interface Props {
   users: UserCredentials[];
