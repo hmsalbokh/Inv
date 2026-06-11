@@ -1,24 +1,8 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { InventoryRecord, PalletType, UserRole, CenterCode, PressCode, Trip, PalletCondition, UserCredentials, PalletStatus } from '../types';
-import { 
-  db,
-  doc, 
-  updateDoc, 
-  collection, 
-  addDoc, 
-  deleteField, 
-  getDoc, 
-  writeBatch, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
-  startAfter, 
-  getDocs, 
-  DocumentData, 
-  QueryDocumentSnapshot
-} from '../firebase';
+import { db } from '../firebase';
+import { doc, updateDoc, collection, addDoc, deleteField, getDoc, writeBatch, query, where, orderBy, limit, startAfter, getDocs, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { useInView } from 'react-intersection-observer';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
@@ -846,12 +830,12 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
                        )}
                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${
                          record.status === 'received' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
-                         record.status === 'in_transit' ? isLate ? 'bg-rose-50 text-rose-600 border border-rose-100' : 'bg-amber-50 text-amber-600 border border-amber-100' : 
+                         record.status === 'in_transit' ? 'bg-amber-50 text-amber-600 border border-amber-100' : 
                          record.status === 'cancelled' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                          'bg-slate-50 text-slate-400 border border-slate-100'
                        }`}>
                          {record.status === 'received' ? 'تم الاستلام ✓' : 
-                          isLate ? 'متأخرة ⏰' : record.status === 'in_transit' ? 'في الطريق 🚚' : 
+                          record.status === 'in_transit' ? 'في الطريق 🚚' : 
                           record.status === 'cancelled' ? '⚠️ ملغاة' :
                           'بانتظار التحميل'}
                        </span>
@@ -907,11 +891,11 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
                            <span className="text-[9px] font-black text-slate-400 block uppercase mb-1">الحالة</span>
                            <span className={`text-[10px] font-bold block ${
                              record.status === 'received' ? 'text-emerald-600' : 
-                             record.status === 'in_transit' ? (isLate ? 'text-rose-600 font-black' : 'text-amber-600') : 
+                             record.status === 'in_transit' ? 'text-amber-600' : 
                              'text-slate-400'
                            }`}>
                              {record.status === 'received' ? 'تم الاستلام ✓' : 
-                              isLate ? 'متأخرة ⏰' : record.status === 'in_transit' ? 'في الطريق 🚚' : 
+                              record.status === 'in_transit' ? 'في الطريق 🚚' : 
                               'بانتظار التحميل'}
                            </span>
                         </div>

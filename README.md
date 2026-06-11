@@ -1,97 +1,20 @@
-# نظام إدارة مخزون طبليات الكتب - حماية مفتاح الذكاء الاصطناعي (API Key Security) 🔒
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
 
-تمت إعادة تصميم معمارية التطبيق البرمجية بالكامل لتطبيق أعلى معايير الأمان وحماية مفاتيح السيرفر الحساسة.
-في المعمارية الجديدة، **مفتاح Gemini API لا يغادر الخادم  (Server-Side) أبداً ولا يتم تضمينه في الكود البرمجي للواجهات الأمامية (Frontend) بأي شكل من الأشكال.**
+# Run and deploy your AI Studio app
 
-\---
+This contains everything you need to run your app locally.
 
-## 🏗️ التصميم المعماري للأمان (Security Architecture)
+View your app in AI Studio: https://ai.studio/apps/a3ac8a8c-5df1-408d-b9fd-4ba0941c298d
 
-1. **الواجهة الأمامية (Vite + React)**:
+## Run Locally
 
-   * تقوم بجمع بيانات الإشعارات وإرسال طلب POST آمن إلى المنفذ البرمجي للسيرفر (Express API) عبر المسار `/api/analyze-inventory`.
-   * لا تستخدم الواجهة الأمامية مكتبة `@google/genai` ولا تحتوي خطوط كودها على أي استدعاء مباشر لـ `process.env` أو أي متغير عام.
-   * يمنع تماماً استخدام بادئات مثل `VITE\_GEMINI\_API\_KEY` لمنع تسريب المفتاح للمتصفح أثناء عملية البناء وبث الـ JS.
-2. **الخادم السري والمنفذ الآمن (Express Server)**:
+**Prerequisites:**  Node.js
 
-   * يستقبل خادم Express البيانات من المتصفح بأمان كامل ويتحقق منها.
-   * يقوم الخادم بقراءة متغير البيئة الآمن `GEMINI\_API\_KEY` أو `API\_KEY` مباشرة من ذاكرة النظام السحابي الخادم (Server Runtime Environment).
-   * يقوم السيرفر بإنشاء اتصال خلفي آمن ومباشر مع خوادم Google Gemini مع تفعيل خيارات حماية الهوية والاتصال السحابي.
-   * يستقبل السيرفر النص فقط، ويعيده للواجهة الأمامية من دون تسريب أي بيانات اعتمادية سحابية.
 
-\---
-
-## 🛠️ كيفية إعداد وتفعيل مفتاح البيئة `GEMINI\_API\_KEY` سحابياً
-
-لحماية المفتاح في بيئة الإنتاج السحابية (Production)، قم بتعيين قيمة البيئة في اللوحة السحابية الخاصة بـ:
-
-### 1\. في Google Cloud Run (أو البيئات المدعومة من Google Cloud):
-
-* اذهب إلى **Cloud Run Console** وافتح إعدادات الحاوية (Container Settings).
-* اذهب لعلامة تبويب **Variables \& Secrets** (المتغيرات والأسرار).
-* قم بإضافة متغير بيئة جديد:
-
-  * **Name/اسم المتغير**: `GEMINI\_API\_KEY`
-  * **Value/القيمة**: ضع مفتاح Gemini الخاص بك المستخرج من Google AI Studio.
-* اضغط حفظ لتطبيق الخدمة بشكل آمن.
-
-### 2\. في Vercel السحابي:
-
-* اذهب إلى لوحة التحكم الخاصة بالمشروع (Project Dashboard) ثم **Settings** ثم **Environment Variables**.
-* قم بإضافة مفتاح جديد:
-
-  * **Key**: `GEMINI\_API\_KEY`
-  * **Value**: ضع قيمة المفتاح السري هنا.
-* تأكد من تفعيل المتغير لجميع البيئات (Production, Preview, Development).
-
-\---
-
-## 🚀 تشغيل التطبيق محلياً وبنائه (Run and Build Locally)
-
-### 1- التثبيت الأولي:
-
-قم بتثبيت الحزم المطلوبة من المجلد الرئيسي بالتوجيه التالي:
-
-```bash
-npm install
-```
-
-### 2- إعداد ملف البيئة المحلي:
-
-انسخ إعدادات الملف التجريبي `.env.example` إلى ملف محلي باسم `.env` أو `.env.local` وعيّن قيم البريد وكلمات المرور بالإضافة لمفتاح Gemini:
-
-```env
-GEMINI\_API\_KEY=your\_secret\_gemini\_api\_key\_here
-GMAIL\_USER=your\_smtp\_gmail@gmail.com
-GMAIL\_PASS=your\_gmail\_app\_password
-```
-
-### 3- التشغيل في طور التطوير (Development Mode):
-
-لتشغيل الخادم المحلي مع الواجهة الأمامية مدمجةً للمطورين:
-
-```bash
-npm run dev
-```
-
-سيبدأ العمل تلقائياً على الرابط: `http://localhost:3000`
-
-### 4- بناء المشروع وتشغيله للإنتاج (Production Build \& Start):
-
-لبناء المشروع مجمعاً ومحسناً وبدء تشغيله في بيئات الاستضافة الجاهزة:
-
-```bash
-# بناء الواجهات الخلفية والأمامية معاً
-npm run build
-
-# تشغيل الخادم والواجهة مدمجة للإنتاج
-npm run start
-```
-
-\---
-
-## ⚠️ تحذير أمني هام للفرق البرمجية (Security Policy)
-
-* تمنع تماماً إضافة مفتاح API الخاص بـ Gemini في أي ملف TypeScript أو JavaScript داخل مجلد المكونات `components` أو `App.tsx` أو صفحات الويب.
-* أي ظهور للمفاتيح في متصفح كود المستخدم (Client-Side Inspection Console) يعتبر ثغرة أمنية ويستلزم تجديد المفاتيح فوراً. المعمارية المرفقة تضمن تلافي هذا الخطر نهائياً.
-
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

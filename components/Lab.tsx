@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { InventoryRecord, PalletType, UserCredentials, CenterCode, PressCode, Trip, PalletCondition, PalletStatus, DistributionTrip } from '../types';
-import { db, doc, setDoc, deleteDoc, writeBatch, collection } from '../firebase';
+import { db } from '../firebase';
+import { doc, setDoc, deleteDoc, writeBatch, collection } from 'firebase/firestore';
 import { 
   Play, 
   CheckCircle, 

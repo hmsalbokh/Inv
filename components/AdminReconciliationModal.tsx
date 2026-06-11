@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { DistributionTrip, PalletType, InventoryRecord } from '../types';
-import { db, handleFirestoreError, OperationType, collection, addDoc, serverTimestamp } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ConfirmModal } from './ConfirmModal';
 
 interface AdminReconciliationModalProps {

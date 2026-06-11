@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { PalletType, UserCredentials, UserRole, PressCode, CenterCode, SystemLog } from '../types';
 import { ConfirmModal } from './ConfirmModal';
-import { db, collection, query, orderBy, limit, onSnapshot } from '../firebase';
+import { db } from '../firebase';
+import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 
 interface Props {
   palletTypes: PalletType[];

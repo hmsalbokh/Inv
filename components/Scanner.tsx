@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { InventoryRecord, CenterCode, PalletCondition, PalletType, UserRole } from '../types';
-import { db, collection, addDoc } from '../firebase';
+import { db } from '../firebase';
+import { collection, addDoc } from 'firebase/firestore';
 
 interface PhotoStatus {
   id: string;
