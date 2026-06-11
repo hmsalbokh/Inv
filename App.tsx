@@ -36,11 +36,11 @@ import firebaseConfig from './firebase-applet-config.json';
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
-const STORAGE_KEY_TYPES = 'v13_types';
-const STORAGE_KEY_RECORDS = 'v13_records';
-const STORAGE_KEY_TRIPS = 'v13_trips';
-const STORAGE_KEY_USERS = 'v13_users';
-const STORAGE_KEY_LAST_RESET = 'v13_last_reset';
+const STORAGE_KEY_TYPES = 'v14_types';
+const STORAGE_KEY_RECORDS = 'v14_records';
+const STORAGE_KEY_TRIPS = 'v14_trips';
+const STORAGE_KEY_USERS = 'v14_users';
+const STORAGE_KEY_LAST_RESET = 'v14_last_reset';
 
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -64,31 +64,77 @@ const DEFAULT_USERS: UserCredentials[] = [
 const DEFAULT_TYPES: PalletType[] = [
   // التعليم العام
   { id: 'g01', stageCode: 'G01', stageName: 'الصف الأول الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg01', stageCode: 'FG01', stageName: 'الصف الأول الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g02', stageCode: 'G02', stageName: 'الصف الثاني الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg02', stageCode: 'FG02', stageName: 'الصف الثاني الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g03', stageCode: 'G03', stageName: 'الصف الثالث الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg03', stageCode: 'FG03', stageName: 'الصف الثالث الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g04', stageCode: 'G04', stageName: 'الصف الرابع الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg04', stageCode: 'FG04', stageName: 'الصف الرابع الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g05', stageCode: 'G05', stageName: 'الصف الخامس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg05', stageCode: 'FG05', stageName: 'الصف الخامس الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g06', stageCode: 'G06', stageName: 'الصف السادس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg06', stageCode: 'FG06', stageName: 'الصف السادس الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g07', stageCode: 'G07', stageName: 'الصف الأول المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg07', stageCode: 'FG07', stageName: 'الصف الأول المتوسط - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g08', stageCode: 'G08', stageName: 'الصف الثاني المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg08', stageCode: 'FG08', stageName: 'الصف الثاني المتوسط - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g09', stageCode: 'G09', stageName: 'الصف الثالث المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg09', stageCode: 'FG09', stageName: 'الصف الثالث المتوسط - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g11', stageCode: 'G11', stageName: 'الصف الأول الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg11', stageCode: 'FG11', stageName: 'الصف الأول الثانوي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g12', stageCode: 'G12', stageName: 'الصف الثاني الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg12', stageCode: 'FG12', stageName: 'الصف الثاني الثانوي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'g13', stageCode: 'G13', stageName: 'الصف الثالث الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fg13', stageCode: 'FG13', stageName: 'الصف الثالث الثانوي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
   
   // المدارس العالمية
   { id: 'ig01', stageCode: 'IG01', stageName: 'المدارس العالمية - الأول الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig01', stageCode: 'FIG01', stageName: 'المدارس العالمية - الأول الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig02', stageCode: 'IG02', stageName: 'المدارس العالمية - الثاني الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig02', stageCode: 'FIG02', stageName: 'المدارس العالمية - الثاني الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig03', stageCode: 'IG03', stageName: 'المدارس العالمية - الثالث الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig03', stageCode: 'FIG03', stageName: 'المدارس العالمية - الثالث الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig04', stageCode: 'IG04', stageName: 'المدارس العالمية - الرابع الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig04', stageCode: 'FIG04', stageName: 'المدارس العالمية - الرابع الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig05', stageCode: 'IG05', stageName: 'المدارس العالمية - الخامس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig05', stageCode: 'FIG05', stageName: 'المدارس العالمية - الخامس الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig06', stageCode: 'IG06', stageName: 'المدارس العالمية - السادس الابتدائي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig06', stageCode: 'FIG06', stageName: 'المدارس العالمية - السادس الابتدائي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig07', stageCode: 'IG07', stageName: 'المدارس العالمية - الأول المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig07', stageCode: 'FIG07', stageName: 'المدارس العالمية - الأول المتوسط - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig08', stageCode: 'IG08', stageName: 'المدارس العالمية - الثاني المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig08', stageCode: 'FIG08', stageName: 'المدارس العالمية - الثاني المتوسط - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig09', stageCode: 'IG09', stageName: 'المدارس العالمية - الثالث المتوسط', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig09', stageCode: 'FIG09', stageName: 'المدارس العالمية - الثالث المتوسط - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig11', stageCode: 'IG11', stageName: 'المدارس العالمية - الأول الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig11', stageCode: 'FIG11', stageName: 'المدارس العالمية - الأول الثانوي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig12', stageCode: 'IG12', stageName: 'المدارس العالمية - الثاني الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig12', stageCode: 'FIG12', stageName: 'المدارس العالمية - الثاني الثانوي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+
   { id: 'ig13', stageCode: 'IG13', stageName: 'المدارس العالمية - الثالث الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
+  { id: 'fig13', stageCode: 'FIG13', stageName: 'المدارس العالمية - الثالث الثانوي - كراتين فارغة', cartonsPerPallet: 30, bundlesPerCarton: 8 },
 ];
 
 export const App: React.FC = () => {
@@ -144,15 +190,27 @@ export const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // Test Firestore connection
+  // Test cloud connection
   useEffect(() => {
     async function testConnection() {
+      const isForcedOffline = localStorage.getItem('force_offline_mode') === 'true';
+      const useOfflineSetting = isForcedOffline || (localStorage.getItem('force_offline_mode') === null && true);
+      if (useOfflineSetting) {
+        return; // Work offline mode behaves beautifully and doesn't need cloud connection tests
+      }
+
       try {
-        await getDocFromServer(doc(db, 'config', 'system'));
+        const checkPromise = getDocFromServer(doc(db, 'config', 'system'));
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Cloud connection timeout')), 4000)
+        );
+        await Promise.race([checkPromise, timeoutPromise]);
       } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration. The client is offline.");
-        }
+        console.error("Please check your database configuration. The client is offline.", error);
+        setShowNotification({
+          title: '⚠️ تعذر الاتصال بقاعدة البيانات السحابية',
+          msg: 'تعذر الاتصال بقاعدة البيانات السحابية (قد يكون الاتصال بالإنترنت مقطوعاً أو خادم السحابة محظوراً). لحفظ وقراءة كافة بياناتك بسرعة فائقة وبدون انقطاع، يُنصح بشدة بالدخول إلى شاشة "الإعدادات" ثم تفعيل "وضع العمل بدون إنترنت" وحفظ الخيارات.'
+        });
       }
     }
     testConnection();
@@ -264,8 +322,15 @@ export const App: React.FC = () => {
 
     // مستمع المستخدمين
     const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      const usersData = snapshot.docs.map(doc => doc.data() as UserCredentials);
-      if (usersData.length > 0) setUsers(usersData);
+      let usersData = snapshot.docs.map(doc => doc.data() as UserCredentials);
+      if (usersData.length > 0) {
+        const adminExists = usersData.some(u => u.code === 'ADMIN' && u.username === 'admin');
+        if (!adminExists) {
+          const adminUser = DEFAULT_USERS.find(u => u.code === 'ADMIN');
+          if (adminUser) usersData = [adminUser, ...usersData];
+        }
+        setUsers(usersData);
+      }
     }, (error) => {
       if (error?.message?.includes('Quota')) {
         setShowNotification({ title: 'تنبيه الحصة', msg: 'تم الوصول للحد الأقصى للقراءة اليومية. التطبيق في وضع القراءة المحدودة.' });
@@ -611,7 +676,29 @@ export const App: React.FC = () => {
   }, [lastResetTimestamp]);
 
   const handleResetStagesToDefault = async () => {
-    // ... (existing code stays same)
+    setIsSystemResetting(true);
+    try {
+      const batch = writeBatch(db);
+      // FIRST, delete all existing palletTypes in Firestore
+      const snap = await getDocs(collection(db, 'palletTypes'));
+      snap.docs.forEach(d => {
+        batch.delete(doc(db, 'palletTypes', d.id));
+      });
+      // SECOND, set all DEFAULT_TYPES
+      DEFAULT_TYPES.forEach(t => {
+        batch.set(doc(db, 'palletTypes', t.id), t);
+      });
+      await batch.commit();
+      setShowNotification({ 
+        title: 'إعادة ضبط المراحل ⚙️', 
+        msg: 'تم إعادة ضبط جميع المراحل بنجاح وإضافة طبليات "الكراتين الفارغة" الافتراضية لكل مرحلة (تبدأ بـ F).' 
+      });
+    } catch (e) {
+      console.error(e);
+      handleFirestoreError(e, OperationType.WRITE, 'palletTypes');
+    } finally {
+      setIsSystemResetting(false);
+    }
   };
 
   const handleMigrateFromOldDb = async () => {
@@ -716,7 +803,9 @@ export const App: React.FC = () => {
       // قائمة الأكواد المطلوبة حسب توجيهات المستخدم الأخيرة
       const requiredCodes = [
         'G01', 'G02', 'G03', 'G04', 'G05', 'G06', 'G07', 'G08', 'G09', 'G11', 'G12', 'G13',
-        'IG01', 'IG02', 'IG03', 'IG04', 'IG05', 'IG06', 'IG07', 'IG08', 'IG09', 'IG11', 'IG12', 'IG13'
+        'IG01', 'IG02', 'IG03', 'IG04', 'IG05', 'IG06', 'IG07', 'IG08', 'IG09', 'IG11', 'IG12', 'IG13',
+        'FG01', 'FG02', 'FG03', 'FG04', 'FG05', 'FG06', 'FG07', 'FG08', 'FG09', 'FG11', 'FG12', 'FG13',
+        'FIG01', 'FIG02', 'FIG03', 'FIG04', 'FIG05', 'FIG06', 'FIG07', 'FIG08', 'FIG09', 'FIG11', 'FIG12', 'FIG13'
       ];
       
       const currentCodes = palletTypes.map(t => t.stageCode);

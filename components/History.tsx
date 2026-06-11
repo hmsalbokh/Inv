@@ -855,7 +855,25 @@ const HistoryInner: React.FC<Props> = ({ records, trips, palletTypes, role, user
                           record.status === 'cancelled' ? '⚠️ ملغاة' :
                           'بانتظار التحميل'}
                        </span>
-                    </div>
+                     </div>
+                     
+                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[10px] font-bold text-slate-500">
+                        <span className="text-indigo-600">{getEntityName(trip ? trip.pressCode : ((record.palletBarcode || '').includes('OPK') ? 'OPK' : 'UNI'))}</span>
+                        <span className="text-slate-300">←</span>
+                        <span className="text-emerald-600">{getEntityName(record.receivedByCenter || record.destination)}</span>
+                        {record.tripId && (
+                          <>
+                            <span className="text-slate-300 mx-1">|</span>
+                            <span className="text-slate-500">الرحلة: <span className="font-mono text-indigo-700">#{trip?.tripNumber || record.tripId}</span></span>
+                          </>
+                        )}
+                        {record.centerTimestamp && (
+                          <>
+                            <span className="text-slate-300 mx-1">|</span>
+                            <span className="text-slate-400 font-mono text-[9px]">{formatDateTime(record.centerTimestamp)}</span>
+                          </>
+                        )}
+                     </div>
                     
                     {(() => {
                       const isWrong = record.isWrongDestination || 

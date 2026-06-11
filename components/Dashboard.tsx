@@ -1886,15 +1886,8 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
               <div className="flex gap-1">
                 {isAdmin && (
                   <>
-                    <label className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95 cursor-pointer">
-                      {isUploadingActual ? 'جاري الرفع...' : '✅ رفع تقرير التنفيذ الفعلي'}
-                      <input type="file" accept=".xlsx, .xls" onChange={handleActualExecutionUpload} className="hidden" disabled={isUploadingActual} />
-                    </label>
                     <button onClick={() => setShowExecutionManualForm(true)} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95">
                       ✏️ إدخال التنفيذ يدوياً
-                    </button>
-                    <button onClick={handleDownloadExecutionTemplate} className="px-6 py-2.5 rounded-2xl bg-indigo-500/20 backdrop-blur-md border border-indigo-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500/30 transition-all active:scale-95" title="تحميل قالب الرحلات المخططة">
-                      📄 تحميل قالب التنفيذ المخطط
                     </button>
                     <button onClick={() => setShowReconciliationModal(true)} className="px-6 py-2.5 rounded-2xl bg-rose-500/20 backdrop-blur-md border border-rose-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-rose-500/30 transition-all active:scale-95 shadow-md">
                       ⚖️ أداة تسوية المخزون
@@ -1904,13 +1897,6 @@ export const Dashboard: React.FC<Props> = ({ palletTypes, records, trips, distri
                     </button>
                   </>
                 )}
-                <label className="px-6 py-2.5 rounded-2xl bg-emerald-500/20 backdrop-blur-md border border-emerald-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-emerald-500/30 transition-all active:scale-95 cursor-pointer">
-                  {isUploadingExcel ? 'جاري الرفع...' : '📊 رفع خطة التوزيع'}
-                  <input type="file" accept=".xlsx, .xls" onChange={handleExcelUpload} className="hidden" disabled={isUploadingExcel} />
-                </label>
-                <button onClick={handleDownloadTemplate} className="px-4 py-2.5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-white text-[10px] font-black flex items-center gap-2 hover:bg-white/20 transition-all active:scale-95" title="تحميل القالب">
-                  📥 القالب
-                </button>
                 <button onClick={handleShiftPlannedTripDates} className="px-4 py-2.5 rounded-2xl bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-white text-[10px] font-black flex items-center gap-2 hover:bg-amber-500/30 transition-all active:scale-95" title="تحديث التواريخ">
                   تحديث تواريخ الخطة (+1 يوم)
                 </button>

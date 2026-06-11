@@ -1,25 +1,204 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import firebaseConfig from './firebase-applet-config.json';
+import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import defaultFirebaseConfig from './firebase-applet-config.json';
 
-// Global flag to use highly performant local simulation when cloud API keys are suspended
-export const useOfflineSimulation = true;
+// ============================================================
+// Configuration
+// ============================================================
+const storedConfigRaw = localStorage.getItem('custom_firebase_config');
+let customConfig: any = null;
+if (storedConfigRaw && storedConfigRaw.trim() !== '') {
+  try { customConfig = JSON.parse(storedConfigRaw); } catch (e) { }
+}
+export const activeFirebaseConfig = customConfig || defaultFirebaseConfig;
 
-// Initialize the real application block but keep catch-safe if it breaks due to disabled services
-let realApp: any = null;
-let realDb: any = null;
-let realAuth: any = null;
+const forcedOffline = localStorage.getItem('force_offline_mode');
+export const useOfflineSimulation = forcedOffline === 'true';
 
-try {
-  realApp = initializeApp(firebaseConfig);
-  realDb = getFirestore(realApp, firebaseConfig.firestoreDatabaseId);
-  realAuth = getAuth(realApp);
-} catch (error) {
-  console.warn("Real Firebase initialization failed or disabled, running in zero-latency sandboxed simulation:", error);
+// ============================================================
+// Supabase Client
+// ============================================================
+let supabaseClient: SupabaseClient | null = null;
+
+function getSupabaseUrl(): string | null {
+  return activeFirebaseConfig.supabaseUrl || null;
 }
 
-// Persisted Mock Database Setup
+function getSupabaseAnonKey(): string | null {
+  return activeFirebaseConfig.supabaseAnonKey || null;
+}
+
+export function initSupabase(): SupabaseClient | null {
+  try {
+    const url = getSupabaseUrl();
+    const key = getSupabaseAnonKey();
+    if (!url || !key) return null;
+    if (supabaseClient) return supabaseClient;
+    supabaseClient = createClient(url, key, {
+      realtime: {
+        params: { eventsPerSecond: 10 }
+      }
+    });
+    return supabaseClient;
+  } catch (e) {
+    console.warn("Supabase init failed:", e);
+    return null;
+  }
+}
+
+if (!useOfflineSimulation) {
+  initSupabase();
+}
+
+// ============================================================
+// Mode Detection
+// ============================================================
+export function isOffline(): boolean {
+  return useOfflineSimulation || !supabaseClient;
+}
+
+export function shouldSimulate(dbOrRef: any): boolean {
+  if (isOffline()) return true;
+  if (!dbOrRef) return true;
+  if (dbOrRef.type === 'mock_firestore' || dbOrRef.type === 'collection' || dbOrRef.type === 'doc' || dbOrRef.type === 'query') return true;
+  return false;
+}
+
+// ============================================================
+// Database Reference
+// ============================================================
+export const db = isOffline() ? ({ type: 'mock_firestore' } as any) : ({ type: 'supabase' } as any);
+
+// ============================================================
+// Auth (mock only - Supabase auth can be added later)
+// ============================================================
+export const auth = {
+  currentUser: null as any,
+  providerData: [] as any[]
+};
+
+let mockAuthUser: any = null;
+const authStateListeners = new Set<(user: any) => void>();
+
+export function setMockUser(user: any) {
+  mockAuthUser = user;
+  auth.currentUser = user;
+  authStateListeners.forEach(cb => cb(user));
+}
+
+export function onAuthStateChanged(authObj: any, callback: any) {
+  const user = {
+    uid: 'offline_anon_user',
+    isAnonymous: true,
+    email: null,
+    emailVerified: false,
+    tenantId: null,
+    providerData: []
+  };
+  setMockUser(user);
+  setTimeout(() => callback(user), 0);
+  authStateListeners.add(callback);
+  return () => { authStateListeners.delete(callback); };
+}
+
+export async function signInAnonymously(authObj: any) {
+  const user = {
+    uid: 'offline_anon_user',
+    isAnonymous: true,
+    email: null,
+    emailVerified: false,
+    tenantId: null,
+    providerData: []
+  };
+  setMockUser(user);
+  return { user };
+}
+
+export async function signOut(authObj: any) {
+  setMockUser(null);
+}
+
+// ============================================================
+// Types
+// ============================================================
+export type DocumentData = any;
+export type QueryDocumentSnapshot = any;
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    operationType,
+    path,
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// ============================================================
+// Mock Snapshot Classes
+// ============================================================
+export class MockDocSnapshot {
+  id: string;
+  _data: any;
+  ref: any;
+  constructor(id: string, data: any, ref: any) {
+    this.id = id;
+    this._data = data;
+    this.ref = ref;
+  }
+  exists() {
+    return this._data !== undefined && this._data !== null;
+  }
+  data() {
+    return this._data ? { ...this._data } : undefined;
+  }
+}
+
+export class MockQuerySnapshot {
+  docs: MockDocSnapshot[];
+  constructor(docs: MockDocSnapshot[]) {
+    this.docs = docs;
+  }
+  get empty() {
+    return this.docs.length === 0;
+  }
+  forEach(callback: (doc: MockDocSnapshot) => void) {
+    this.docs.forEach(callback);
+  }
+}
+
+// ============================================================
+// Offline (localStorage) Implementation
+// ============================================================
+const OFFLINE_STORAGE_VERSION = 'v14';
+const OFFLINE_VERSION_KEY = 'offline_storage_version';
+
+function checkOfflineVersion(): void {
+  const storedVersion = localStorage.getItem(OFFLINE_VERSION_KEY);
+  if (storedVersion !== OFFLINE_STORAGE_VERSION) {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('offline_col_')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    localStorage.setItem(OFFLINE_VERSION_KEY, OFFLINE_STORAGE_VERSION);
+  }
+}
+function generateOfflineId() {
+  return 'col_' + Math.random().toString(36).substr(2, 9);
+}
+
 const DEFAULT_USERS = [
   { id: '1', role: 'monitor', code: 'ADMIN', username: 'admin', password: 'H0566749388h', displayName: 'مسئول النظام', locationName: 'الإدارة' },
   { id: '7', role: 'monitor', code: 'STATS', username: 'stats', password: '123', displayName: 'مسئول المراقبة', locationName: 'المراقبة والإحصاء' },
@@ -57,11 +236,8 @@ const DEFAULT_TYPES = [
   { id: 'ig13', stageCode: 'IG13', stageName: 'المدارس العالمية - الثالث الثانوي', cartonsPerPallet: 30, bundlesPerCarton: 8 },
 ];
 
-function generateOfflineId() {
-  return 'col_' + Math.random().toString(36).substr(2, 9);
-}
-
 export function getOfflineCollection(colName: string): any[] {
+  checkOfflineVersion();
   const items = localStorage.getItem(`offline_col_${colName}`);
   if (!items) {
     if (colName === 'users') {
@@ -88,133 +264,35 @@ export function setOfflineCollection(colName: string, items: any[]): void {
 
 // Sync management listeners
 const listeners = new Set<() => void>();
+let supabaseSubscriptions: RealtimeChannel[] = [];
+
 export function triggerOfflineListeners() {
   listeners.forEach(cb => cb());
 }
 
-// Mock snapshot classes matching Firestore schema
-export class MockDocSnapshot {
-  id: string;
-  _data: any;
-  ref: any;
-  constructor(id: string, data: any, ref: any) {
-    this.id = id;
-    this._data = data;
-    this.ref = ref;
-  }
-  exists() {
-    return this._data !== undefined && this._data !== null;
-  }
-  data() {
-    return this._data ? { ...this._data } : undefined;
-  }
-}
-
-export class MockQuerySnapshot {
-  docs: MockDocSnapshot[];
-  constructor(docs: MockDocSnapshot[]) {
-    this.docs = docs;
-  }
-  get empty() {
-    return this.docs.length === 0;
-  }
-  forEach(callback: (doc: MockDocSnapshot) => void) {
-    this.docs.forEach(callback);
-  }
-}
-
-// Re-export original or simulated database and authentication
-export const db = useOfflineSimulation ? ({ type: 'mock_firestore' } as any) : realDb;
-
-export const auth = useOfflineSimulation ? {
-  currentUser: null as any,
-  providerData: [] as any[]
-} : realAuth;
-
-// Database type mocks
-export type DocumentData = any;
-export type QueryDocumentSnapshot = any;
-
-// Simulated Authentication APIs
-let mockAuthUser: any = null;
-const authStateListeners = new Set<(user: any) => void>();
-
-export function setMockUser(user: any) {
-  mockAuthUser = user;
-  auth.currentUser = user;
-  authStateListeners.forEach(cb => cb(user));
-}
-
-export function onAuthStateChanged(authObj: any, callback: any) {
-  if (useOfflineSimulation) {
-    const user = {
-      uid: 'offline_anon_user',
-      isAnonymous: true,
-      email: null,
-      emailVerified: false,
-      tenantId: null,
-      providerData: []
-    };
-    setMockUser(user);
-    setTimeout(() => callback(user), 0);
-    authStateListeners.add(callback);
-    return () => {
-      authStateListeners.delete(callback);
-    };
-  }
-  // Safe fallback if real chosen
-  return () => {};
-}
-
-export async function signInAnonymously(authObj: any) {
-  if (useOfflineSimulation) {
-    const user = {
-      uid: 'offline_anon_user',
-      isAnonymous: true,
-      email: null,
-      emailVerified: false,
-      tenantId: null,
-      providerData: []
-    };
-    setMockUser(user);
-    return { user };
-  }
-}
-
-export async function signOut(authObj: any) {
-  if (useOfflineSimulation) {
-    setMockUser(null);
-    return;
-  }
-}
-
-// Simulated Firestore APIs
+// ============================================================
+// Collection / Document / Query References
+// ============================================================
 export function collection(dbObj: any, path: string) {
-  if (useOfflineSimulation) {
-    return { path, type: 'collection' };
-  }
+  return { path, type: 'collection' };
 }
 
 export function doc(dbObj: any, colOrDocPath: string, docId?: string) {
-  if (useOfflineSimulation) {
-    const fullPath = docId ? `${colOrDocPath}/${docId}` : colOrDocPath;
-    const computedId = docId || colOrDocPath.split('/').pop() || '';
-    return { path: fullPath, id: computedId, type: 'doc' };
-  }
+  const fullPath = docId ? `${colOrDocPath}/${docId}` : colOrDocPath;
+  const computedId = docId || colOrDocPath.split('/').pop() || '';
+  return { path: fullPath, id: computedId, type: 'doc' };
 }
 
 export function query(colRef: any, ...constraints: any[]) {
-  if (useOfflineSimulation) {
-    return { path: colRef.path, type: 'query', constraints };
-  }
+  return { path: colRef.path, type: 'query', constraints };
 }
 
-export function where(field: string, operator: string, value: any) {
+export function where(field: string, operator: any, value: any) {
   return { type: 'where', field, operator, value };
 }
 
-export function orderBy(field: string, direction: string = 'asc') {
-  return { type: 'orderBy', field, direction };
+export function orderBy(field: string, direction: any = 'asc') {
+  return { type: 'orderBy', field, direction: direction === 'desc' ? 'desc' : 'asc' };
 }
 
 export function limit(n: number) {
@@ -233,8 +311,53 @@ export function serverTimestamp() {
   return { _methodName: 'serverTimestamp' };
 }
 
+// ============================================================
+// Supabase Query Helpers
+// ============================================================
+function colNameFromPath(path: string): string {
+  return path.split('/')[0];
+}
+
+function docIdFromPath(path: string): string {
+  return path.split('/').pop() || '';
+}
+
+function buildSupabaseQuery(col: string, constraints?: any[]) {
+  const tableName = toSupabaseTable(col);
+  let query = supabaseClient!.from(tableName).select('*');
+
+  if (constraints) {
+    for (const c of constraints) {
+      if (c.type === 'where') {
+        const field = `document->>${c.field}`;
+        if (c.operator === '==') query = query.eq(field, String(c.value));
+        else if (c.operator === '>') query = query.gt(field, String(c.value));
+        else if (c.operator === '<') query = query.lt(field, String(c.value));
+        else if (c.operator === '>=') query = query.gte(field, String(c.value));
+        else if (c.operator === '<=') query = query.lte(field, String(c.value));
+      } else if (c.type === 'orderBy') {
+        query = query.order(`document->>${c.field}`, { ascending: c.direction !== 'desc' });
+      } else if (c.type === 'limit') {
+        query = query.limit(c.n);
+      }
+    }
+  }
+
+  return query;
+}
+
+function toSupabaseTable(colName: string): string {
+  if (colName === 'distributionTrips') return 'distribution_trips';
+  if (colName === 'system_logs') return 'system_logs';
+  if (colName === 'palletTypes') return 'pallet_types';
+  return colName;
+}
+
+// ============================================================
+// Read Operations
+// ============================================================
 export async function getDoc(docRef: any) {
-  if (useOfflineSimulation) {
+  if (isOffline()) {
     const parts = docRef.path.split('/');
     const colName = parts[0];
     const docId = parts[1];
@@ -242,245 +365,266 @@ export async function getDoc(docRef: any) {
     const found = items.find(item => item.id === docId);
     return new MockDocSnapshot(docId, found, docRef);
   }
+
+  const col = colNameFromPath(docRef.path);
+  const id = docIdFromPath(docRef.path);
+  const { data, error } = await supabaseClient!
+    .from(toSupabaseTable(col))
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return new MockDocSnapshot(id, data?.document, docRef);
 }
 
 export async function getDocFromServer(docRef: any) {
   return getDoc(docRef);
 }
 
+async function applyOfflineConstraints(items: any[], constraints?: any[]): Promise<any[]> {
+  if (!constraints) return items;
+  for (const c of constraints) {
+    if (c.type === 'where') {
+      const { field, operator, value } = c;
+      items = items.filter(item => {
+        const itemVal = item[field];
+        if (operator === '==') return String(itemVal).trim().toUpperCase() === String(value).trim().toUpperCase();
+        if (operator === '>') return Number(itemVal) > Number(value);
+        if (operator === '<') return Number(itemVal) < Number(value);
+        if (operator === '>=') return Number(itemVal) >= Number(value);
+        if (operator === '<=') return Number(itemVal) <= Number(value);
+        return true;
+      });
+    } else if (c.type === 'orderBy') {
+      const { field, direction } = c;
+      items.sort((a, b) => {
+        const va = a[field], vb = b[field];
+        if (direction === 'desc') return va > vb ? -1 : va < vb ? 1 : 0;
+        return va < vb ? -1 : va > vb ? 1 : 0;
+      });
+    } else if (c.type === 'limit') {
+      items = items.slice(0, c.n);
+    }
+  }
+  return items;
+}
+
 export async function getDocs(queryRefOrColRef: any) {
-  if (useOfflineSimulation) {
+  if (isOffline()) {
     const colName = queryRefOrColRef.path;
     let items = getOfflineCollection(colName);
-
-    if (queryRefOrColRef.constraints) {
-      for (const c of queryRefOrColRef.constraints) {
-        if (c.type === 'where') {
-          const { field, operator, value } = c;
-          items = items.filter(item => {
-            const itemVal = item[field];
-            if (operator === '==') return String(itemVal).trim().toUpperCase() === String(value).trim().toUpperCase();
-            if (operator === '>') return Number(itemVal) > Number(value);
-            if (operator === '<') return Number(itemVal) < Number(value);
-            if (operator === '>=') return Number(itemVal) >= Number(value);
-            if (operator === '<=') return Number(itemVal) <= Number(value);
-            return true;
-          });
-        }
-      }
-    }
-
+    items = await applyOfflineConstraints(items, queryRefOrColRef.constraints);
     const docSnaps = items.map(item => new MockDocSnapshot(item.id || '', item, { path: `${colName}/${item.id}` }));
     return new MockQuerySnapshot(docSnaps);
   }
+
+  const col = colNameFromPath(queryRefOrColRef.path);
+  let sbQuery = buildSupabaseQuery(col, queryRefOrColRef.constraints);
+
+  if (queryRefOrColRef.type === 'doc') {
+    const id = docIdFromPath(queryRefOrColRef.path);
+    sbQuery = (sbQuery as any).eq('id', id);
+  }
+
+  const { data, error } = await (sbQuery as any);
+  if (error) throw error;
+
+  const docs = (data || []).map((row: any) =>
+    new MockDocSnapshot(row.id, row.document, { path: `${col}/${row.id}` })
+  );
+  return new MockQuerySnapshot(docs);
 }
 
+// ============================================================
+// Write Operations
+// ============================================================
 export async function setDoc(docRef: any, data: any, options?: any) {
-  if (useOfflineSimulation) {
-    const parts = docRef.path.split('/');
-    const colName = parts[0];
-    const docId = parts[1];
-    let items = getOfflineCollection(colName);
-    const index = items.findIndex(item => item.id === docId);
-    
-    const processedData = { ...data };
-    Object.keys(processedData).forEach(k => {
-      if (processedData[k] && typeof processedData[k] === 'object' && processedData[k]._methodName === 'serverTimestamp') {
-        processedData[k] = Date.now();
-      }
-    });
+  const col = colNameFromPath(docRef.path);
+  const id = docIdFromPath(docRef.path);
 
-    if (index >= 0) {
-      if (options?.merge) {
-        items[index] = { ...items[index], ...processedData, id: docId };
-      } else {
-        items[index] = { ...processedData, id: docId };
-      }
+  if (isOffline()) {
+    const items = getOfflineCollection(col);
+    const existingIdx = items.findIndex(item => item.id === id);
+    const newItem = options?.merge ? { ...(existingIdx >= 0 ? items[existingIdx] : {}), ...data, id } : { ...data, id };
+    if (existingIdx >= 0) {
+      items[existingIdx] = newItem;
     } else {
-      items.push({ ...processedData, id: docId });
+      items.push(newItem);
     }
-    
-    setOfflineCollection(colName, items);
+    setOfflineCollection(col, items);
     triggerOfflineListeners();
     return;
   }
+
+  const existing = (await supabaseClient!
+    .from(toSupabaseTable(col))
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()).data;
+
+  let document = data;
+  if (options?.merge && existing?.document) {
+    document = { ...existing.document, ...data };
+  }
+
+  const { error } = await supabaseClient!
+    .from(toSupabaseTable(col))
+    .upsert({ id, document }, { onConflict: 'id' });
+
+  if (error) throw error;
 }
 
 export async function updateDoc(docRef: any, data: any) {
-  if (useOfflineSimulation) {
-    const parts = docRef.path.split('/');
-    const colName = parts[0];
-    const docId = parts[1];
-    let items = getOfflineCollection(colName);
-    const index = items.findIndex(item => item.id === docId);
-    if (index >= 0) {
-      const updated = { ...items[index] };
-      Object.keys(data).forEach(key => {
-        if (data[key] === '__DELETE_FIELD__') {
-          delete updated[key];
+  const col = colNameFromPath(docRef.path);
+  const id = docIdFromPath(docRef.path);
+
+  if (isOffline()) {
+    const items = getOfflineCollection(col);
+    const idx = items.findIndex(item => item.id === id);
+    if (idx >= 0) {
+      // Handle deleteField
+      for (const [key, val] of Object.entries(data)) {
+        if (val === '__DELETE_FIELD__') {
+          delete items[idx][key];
         } else {
-          updated[key] = data[key];
+          items[idx][key] = val;
         }
-      });
-      items[index] = updated;
-      setOfflineCollection(colName, items);
-      triggerOfflineListeners();
+      }
+      setOfflineCollection(col, items);
     }
+    triggerOfflineListeners();
     return;
+  }
+
+  const { data: existing } = await supabaseClient!
+    .from(toSupabaseTable(col))
+    .select('document')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (existing) {
+    const updatedDoc = { ...existing.document };
+    for (const [key, val] of Object.entries(data)) {
+      if (val === '__DELETE_FIELD__') {
+        delete updatedDoc[key];
+      } else {
+        (updatedDoc as any)[key] = val;
+      }
+    }
+    const { error } = await supabaseClient!
+      .from(toSupabaseTable(col))
+      .update({ document: updatedDoc })
+      .eq('id', id);
+    if (error) throw error;
   }
 }
 
 export async function addDoc(colRef: any, data: any) {
-  if (useOfflineSimulation) {
-    const colName = colRef.path;
-    const items = getOfflineCollection(colName);
-    const newId = generateOfflineId();
-    const newItem = { ...data, id: newId };
-    items.push(newItem);
-    setOfflineCollection(colName, items);
+  const col = colNameFromPath(colRef.path);
+  const id = generateOfflineId();
+
+  if (isOffline()) {
+    const items = getOfflineCollection(col);
+    items.push({ ...data, id });
+    setOfflineCollection(col, items);
     triggerOfflineListeners();
-    return { id: newId, path: `${colName}/${newId}` };
+    return { id };
   }
+
+  const { error } = await supabaseClient!
+    .from(toSupabaseTable(col))
+    .insert({ id, document: { ...data, id } });
+
+  if (error) throw error;
+  return { id };
 }
 
 export async function deleteDoc(docRef: any) {
-  if (useOfflineSimulation) {
-    const parts = docRef.path.split('/');
-    const colName = parts[0];
-    const docId = parts[1];
-    let items = getOfflineCollection(colName);
-    items = items.filter(item => item.id !== docId);
-    setOfflineCollection(colName, items);
+  const col = colNameFromPath(docRef.path);
+  const id = docIdFromPath(docRef.path);
+
+  if (isOffline()) {
+    const items = getOfflineCollection(col);
+    const filtered = items.filter(item => item.id !== id);
+    setOfflineCollection(col, filtered);
     triggerOfflineListeners();
     return;
   }
+
+  const { error } = await supabaseClient!
+    .from(toSupabaseTable(col))
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
 }
 
-export function onSnapshot(ref: any, callback: any, errorCallback?: any) {
-  if (useOfflineSimulation) {
-    const update = () => {
-      if (ref.type === 'doc') {
-        getDocOffline(ref).then(snap => callback(snap)).catch(err => errorCallback?.(err));
-      } else {
-        getDocsOffline(ref).then(snap => callback(snap)).catch(err => errorCallback?.(err));
-      }
-    };
-    
-    setTimeout(update, 0);
-    listeners.add(update);
-    return () => {
-      listeners.delete(update);
-    };
-  }
-  return () => {};
-}
-
-async function getDocOffline(ref: any) {
-  const parts = ref.path.split('/');
-  const colName = parts[0];
-  const docId = parts[1];
-  const items = getOfflineCollection(colName);
-  const found = items.find(item => item.id === docId);
-  return new MockDocSnapshot(docId, found, ref);
-}
-
-async function getDocsOffline(ref: any) {
-  const colName = ref.path;
-  let items = getOfflineCollection(colName);
-
-  if (ref.constraints) {
-    for (const c of ref.constraints) {
-      if (c.type === 'where') {
-        const { field, operator, value } = c;
-        items = items.filter(item => {
-          const itemVal = item[field];
-          if (operator === '==') return String(itemVal).trim().toUpperCase() === String(value).trim().toUpperCase();
-          if (operator === '>') return Number(itemVal) > Number(value);
-          if (operator === '<') return Number(itemVal) < Number(value);
-          if (operator === '>=') return Number(itemVal) >= Number(value);
-          if (operator === '<=') return Number(itemVal) <= Number(value);
-          return true;
-        });
+// ============================================================
+// Batch Write
+// ============================================================
+export function writeBatch(dbObj: any) {
+  const ops: { type: 'set' | 'update' | 'delete'; ref: any; data?: any; options?: any }[] = [];
+  return {
+    set(docRef: any, data: any, options?: any) { ops.push({ type: 'set', ref: docRef, data, options }); },
+    update(docRef: any, data: any) { ops.push({ type: 'update', ref: docRef, data }); },
+    delete(docRef: any) { ops.push({ type: 'delete', ref: docRef }); },
+    async commit() {
+      for (const op of ops) {
+        if (op.type === 'set') await setDoc(op.ref, op.data, op.options);
+        else if (op.type === 'update') await updateDoc(op.ref, op.data);
+        else if (op.type === 'delete') await deleteDoc(op.ref);
       }
     }
-  }
-
-  const docSnaps = items.map(item => new MockDocSnapshot(item.id || '', item, { path: `${colName}/${item.id}` }));
-  return new MockQuerySnapshot(docSnaps);
+  };
 }
 
-export function writeBatch(dbObj: any) {
-  if (useOfflineSimulation) {
-    const ops: { type: 'set' | 'update' | 'delete', ref: any, data?: any, options?: any }[] = [];
-    return {
-      set(docRef: any, data: any, options?: any) {
-        ops.push({ type: 'set', ref: docRef, data, options });
-      },
-      update(docRef: any, data: any) {
-        ops.push({ type: 'update', ref: docRef, data });
-      },
-      delete(docRef: any) {
-        ops.push({ type: 'delete', ref: docRef });
-      },
-      async commit() {
-        for (const op of ops) {
-          if (op.type === 'set') {
-            await setDoc(op.ref, op.data, op.options);
-          } else if (op.type === 'update') {
-            await updateDoc(op.ref, op.data);
-          } else if (op.type === 'delete') {
-            await deleteDoc(op.ref);
-          }
-        }
-        triggerOfflineListeners();
+// ============================================================
+// Realtime (onSnapshot)
+// ============================================================
+const snapshotSubscriptions = new Map<string, () => void>();
+
+export function onSnapshot(ref: any, callback: any, errorCallback?: any) {
+  if (isOffline()) {
+    const update = () => {
+      if (ref.type === 'doc') {
+        getDoc(ref).then(snap => callback(snap)).catch(err => errorCallback?.(err));
+      } else {
+        getDocs(ref).then(snap => callback(snap)).catch(err => errorCallback?.(err));
       }
     };
+    setTimeout(update, 0);
+    listeners.add(update);
+    return () => { listeners.delete(update); };
   }
-}
 
-// Original error handler
-export enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
+  // Supabase real-time mode
+  const col = colNameFromPath(ref.path);
+  const channelName = `snapshot-${col}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
-}
+  const fetchData = ref.type === 'doc'
+    ? () => getDoc(ref)
+    : () => getDocs(ref);
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: []
-    },
-    operationType,
-    path
+  const channel = supabaseClient!.channel(channelName)
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: toSupabaseTable(col) },
+      async () => {
+        try {
+          const snap = await fetchData();
+          callback(snap);
+        } catch (err) {
+          if (errorCallback) errorCallback(err);
+        }
+      }
+    )
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        fetchData().then(snap => callback(snap));
+      }
+    });
+
+  return () => {
+    supabaseClient!.removeChannel(channel);
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
 }

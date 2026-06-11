@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.39.0",
+    "@supabase/supabase-js": "^2.108.1",
     "@tanstack/react-virtual": "^3.13.25",
     "cors": "^2.8.6",
     "express": "^5.2.1",

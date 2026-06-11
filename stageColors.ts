@@ -40,8 +40,13 @@ export const getStageColor = (stageCodeRaw: string): StageColor => {
   }
 
   const code = stageCodeRaw.trim().toUpperCase();
+  // If starting with F, strip the empty carton prefix F to match the color of its core stage
+  let normalized = code;
+  if (normalized.startsWith('F')) {
+    normalized = normalized.substring(1);
+  }
   // Strip IG / G leading zeros to match keys (e.g. IG07 -> IG7 -> G7)
-  let normalized = code
+  normalized = normalized
     .replace(/^IG0*(\d+)/, 'G$1') // Treat IG10 and G10 with the same core color scheme for consistency
     .replace(/^G0*(\d+)/, 'G$1');
 
